@@ -169,9 +169,21 @@ alias network="space-network-dialog"
 alias power="space-power-menu"
 
 # Terminal & Navigation
-alias ls="ls --color=auto --group-directories-first"
-alias ll="ls -lh --color=auto --group-directories-first"
-alias la="ls -lah --color=auto --group-directories-first"
+if command -v eza &>/dev/null; then
+    alias ls="eza --icons --group-directories-first"
+    alias ll="eza -lh --icons --group-directories-first --git"
+    alias la="eza -lah --icons --group-directories-first --git"
+    alias tree="eza --tree --icons --group-directories-first"
+    alias ltree="eza --tree --level=2 --icons --group-directories-first"
+    alias ltree3="eza --tree --level=3 --icons --group-directories-first"
+else
+    alias ls="ls --color=auto --group-directories-first"
+    alias ll="ls -lh --color=auto --group-directories-first"
+    alias la="ls -lah --color=auto --group-directories-first"
+    alias tree="tree -C"
+    alias ltree="tree -C -L 2"
+    alias ltree3="tree -C -L 3"
+fi
 alias grep="grep --color=auto"
 alias df="df -h"
 alias free="free -h"
