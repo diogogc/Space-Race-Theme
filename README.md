@@ -81,6 +81,12 @@ cd Space-Race-Theme
 ./install.sh
 ```
 
+### Uninstallation
+```bash
+./uninstall.sh         # Interactive removal
+./uninstall.sh --clean # Remove binaries/configs and purge runtime caches
+```
+
 ---
 
 ## 🔒 Security & Quality Standards
