@@ -41,6 +41,11 @@ The environment features four authentic retro flight-deck profiles switchable in
 - **Audio Routing & Quindar Beeps (`space-capcom-dialog` / `space-quindar`)**: Volume dispatch, WirePlumber device switching, and authentic 2524 Hz Apollo test tones.
 - **ISS Orbital Tracker (`space-iss-dialog`)**: Real-time coordinates, crew complement, and ground pass telemetry for the International Space Station.
 
+### 4. 🐚 Hardened Zsh & Astronaut Starship Environment
+- **Synchronized Prompt Profiles**: Each mission profile (`nasa`, `crt-amber`, `crt-green`, `kosmos-vfd`) includes a tailored `starship.toml` prompt reflecting the active chassis colors, custom mission symbols, and live git telemetry.
+- **Security & Secret Leak Hardening**: History configured with `HIST_IGNORE_SPACE`, strict `0600` permissions on `.zsh_history`, deduplication, and safe execution path sanitization.
+- **Fastfetch Mission Telemetry**: Custom system telemetry hardware matrix formatted with mission control indicators upon shell login (`fetch`).
+
 ---
 
 ## ⌨️ Keybinding Cheatsheet

@@ -1,0 +1,107 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+
+format = """
+[╭─](fg:dim_mint)$os$custom$directory$git_branch$git_status$package$c$rust$golang$nodejs$python$cmd_duration
+[╰─](fg:dim_mint)$character"""
+
+right_format = """$time"""
+
+palette = "kosmos_vfd"
+
+[palettes.kosmos_vfd]
+bg_base = "#142421"
+bg_surface = "#1a332e"
+mint = "#48e5c2"
+bright_mint = "#70f8d8"
+dim_mint = "#264740"
+red = "#d90429"
+cream = "#f4eedb"
+blue = "#3a86ff"
+fg = "#48e5c2"
+
+[character]
+success_symbol = "[⫸](bold fg:mint)"
+error_symbol = "[⫸](bold fg:red)"
+vimcmd_symbol = "[❮](bold fg:bright_mint)"
+
+[os]
+disabled = false
+style = "bg:bg_surface fg:bright_mint"
+format = "[ $symbol ]($style)"
+
+[os.symbols]
+Arch = "󰣇 KOSMOS"
+Linux = "󰌽 CCCP"
+
+[custom.mission]
+command = "echo SOYUZ-TM"
+when = "true"
+style = "bg:bg_surface fg:cream"
+format = "[ 🛰  $output ]($style)[](fg:bg_surface bg:dim_mint)"
+
+[directory]
+style = "bg:dim_mint fg:bright_mint"
+format = "[  $path ]($style)[](fg:dim_mint bg:bg_surface)"
+truncation_length = 3
+truncation_symbol = "…/"
+truncate_to_repo = true
+
+[git_branch]
+style = "bg:bg_surface fg:mint"
+symbol = " "
+format = "[ $symbol$branch ]($style)"
+
+[git_status]
+style = "bg:bg_surface fg:cream"
+format = "[$all_status$ahead_behind ]($style)[](fg:bg_surface)"
+conflicted = "󰞇 "
+ahead = "⇡${count} "
+behind = "⇣${count} "
+diverged = "󰹹 "
+untracked = ""
+stashed = "📦"
+modified = "󱗜 "
+staged = "✓"
+renamed = "󰑕 "
+deleted = "🗑 "
+
+[cmd_duration]
+min_time = 2_000
+style = "fg:bright_mint"
+format = "[ 󱐋 $duration ]($style)"
+
+[time]
+disabled = false
+time_format = "%H:%M:%S"
+style = "fg:dim_mint"
+format = "[ 󱑎 $time MSK ]($style)"
+
+[c]
+symbol = " "
+style = "fg:mint"
+format = "[ $symbol($version) ]($style)"
+
+[rust]
+symbol = " "
+style = "fg:cream"
+format = "[ $symbol($version) ]($style)"
+
+[golang]
+symbol = " "
+style = "fg:bright_mint"
+format = "[ $symbol($version) ]($style)"
+
+[nodejs]
+symbol = " "
+style = "fg:mint"
+format = "[ $symbol($version) ]($style)"
+
+[python]
+symbol = " "
+style = "fg:blue"
+format = "[ $symbol(${version})( \\($virtualenv\\)) ]($style)"
+
+[package]
+symbol = "󰏗 "
+style = "fg:dim_mint"
+format = "[ $symbol$version ]($style)"

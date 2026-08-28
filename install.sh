@@ -72,7 +72,7 @@ if [[ "$MODE" == "link" ]]; then
         ln -sfn "$d" "$HOME/.config/themes/$bname"
     done
 
-    echo "==> Linking Hyprland, Waybar, Kitty, Dunst configs..."
+    echo "==> Linking Hyprland, Waybar, Kitty, Dunst, Fastfetch, Zsh configs..."
     ln -sf "$SCRIPT_DIR/config/hypr/hyprland.lua" "$HOME/.config/hypr/hyprland.lua"
     ln -sf "$SCRIPT_DIR/config/hypr/hyprland.conf" "$HOME/.config/hypr/hyprland.conf"
     ln -sf "$SCRIPT_DIR/config/hypr/hyprlock.conf" "$HOME/.config/hypr/hyprlock.conf"
@@ -81,7 +81,12 @@ if [[ "$MODE" == "link" ]]; then
     ln -sf "$SCRIPT_DIR/config/waybar/style.css" "$HOME/.config/waybar/style.css"
     ln -sf "$SCRIPT_DIR/config/kitty/kitty.conf" "$HOME/.config/kitty/kitty.conf"
     ln -sf "$SCRIPT_DIR/config/dunst/dunstrc" "$HOME/.config/dunst/dunstrc"
+    ln -sf "$SCRIPT_DIR/config/fastfetch/config.jsonc" "$HOME/.config/fastfetch/config.jsonc"
     ln -sf "$SCRIPT_DIR/config/space-screensaver/config.json" "$HOME/.config/space-screensaver/config.json"
+    ln -sf "$SCRIPT_DIR/config/zsh/.zshrc" "$HOME/.zshrc"
+    ln -sf "$SCRIPT_DIR/config/zsh/.zshenv" "$HOME/.zshenv"
+    ln -sf "$SCRIPT_DIR/config/zsh/.zprofile" "$HOME/.zprofile"
+    ln -sf "$SCRIPT_DIR/config/themes/nasa/starship.toml" "$HOME/.config/starship.toml"
 
     echo "==> Linking wallpapers..."
     for f in "$SCRIPT_DIR/wallpapers/"*.*; do
@@ -104,12 +109,17 @@ else
     echo "==> Installing theme palettes to ~/.config/themes..."
     cp -r "$SCRIPT_DIR/config/themes/"* "$HOME/.config/themes/"
 
-    echo "==> Installing Hyprland, Waybar, Kitty, Dunst configs..."
+    echo "==> Installing Hyprland, Waybar, Kitty, Dunst, Fastfetch, Zsh configs..."
     cp -r "$SCRIPT_DIR/config/hypr/"* "$HOME/.config/hypr/"
     cp -r "$SCRIPT_DIR/config/waybar/"* "$HOME/.config/waybar/"
     cp -r "$SCRIPT_DIR/config/kitty/"* "$HOME/.config/kitty/"
     cp -r "$SCRIPT_DIR/config/dunst/"* "$HOME/.config/dunst/"
+    cp -r "$SCRIPT_DIR/config/fastfetch/"* "$HOME/.config/fastfetch/"
     cp -r "$SCRIPT_DIR/config/space-screensaver/"* "$HOME/.config/space-screensaver/"
+    cp "$SCRIPT_DIR/config/zsh/.zshrc" "$HOME/.zshrc"
+    cp "$SCRIPT_DIR/config/zsh/.zshenv" "$HOME/.zshenv"
+    cp "$SCRIPT_DIR/config/zsh/.zprofile" "$HOME/.zprofile"
+    cp "$SCRIPT_DIR/config/themes/nasa/starship.toml" "$HOME/.config/starship.toml"
 
     echo "==> Installing wallpapers..."
     cp "$SCRIPT_DIR/wallpapers/"*.* "$HOME/Pictures/Wallpapers/" 2>/dev/null || true

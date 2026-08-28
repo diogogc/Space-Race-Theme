@@ -72,6 +72,11 @@ if [[ -d "$HOME/.config/kitty" && -f "$THEMES_DIR/$target/kitty.conf" ]]; then
   fi
 fi
 
+# 3b. Starship Prompt & Shell Telemetry
+if [[ -f "$THEMES_DIR/$target/starship.toml" ]]; then
+  ln -sf "$THEMES_DIR/$target/starship.toml" "$HOME/.config/starship.toml"
+fi
+
 # 4. Wallpaper
 if [[ -f "$THEMES_DIR/$target/wallpaper.jpg" ]]; then
   ln -sf "$THEMES_DIR/$target/wallpaper.jpg" "$HOME/.config/hypr/wallpaper-current.jpg"
