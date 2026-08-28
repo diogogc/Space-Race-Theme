@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Apollo System Hardware Telemetry Console
+GenericName=System Hardware Telemetry & Task Dispatch
+Comment=Apollo Mission Control real-time CPU, core load, RAM, storage and task dispatch console
+Exec=/home/diogo/.local/bin/space-telemetry-dialog
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;Settings;
+Keywords=system;cpu;ram;telemetry;hardware;monitor;top;htop;processes;tasks;apollo;
+StartupWMClass=space-telemetry-dialog

@@ -1,0 +1,9 @@
+[SddmGreeterTheme]
+Name=Space Mission Control (Apollo)
+Description=Vintage 1960s Apollo Space Race & Mainframe Telemetry Login Theme
+Author=Diogo & Antigravity
+Type=sddm-theme
+Version=1.0
+MainScript=Main.qml
+ConfigFile=theme.conf
+TranslationsDirectory=translations

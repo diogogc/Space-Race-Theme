@@ -1,0 +1,66 @@
+/* Soviet Kosmos VFD Wofi Style */
+window {
+    margin: 0px;
+    background-color: rgba(7, 16, 14, 0.98);
+    border: 2px solid #48e5c2;
+    border-radius: 2px;
+    font-family: 'JetBrainsMono Nerd Font', 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    box-shadow: 0 0 16px rgba(72, 229, 194, 0.35);
+}
+
+#outer-box {
+    margin: 10px;
+    background-color: transparent;
+}
+
+#input {
+    margin: 4px 4px 10px 4px;
+    padding: 8px 12px;
+    border: 1px solid #183d34;
+    border-radius: 2px;
+    color: #48e5c2;
+    background-color: #040b09;
+    font-weight: bold;
+}
+
+#input:focus {
+    border: 1px solid #48e5c2;
+    box-shadow: 0 0 8px rgba(72, 229, 194, 0.4);
+}
+
+#inner-box {
+    margin: 2px;
+    background-color: #0a1714;
+    border: 1px solid #183d34;
+    border-radius: 2px;
+}
+
+#scroll {
+    margin: 0px;
+    background-color: transparent;
+}
+
+#text {
+    margin: 4px 8px;
+    color: #36b89c;
+}
+
+#entry {
+    padding: 6px 10px;
+    margin: 1px 0px;
+    border-radius: 2px;
+    background-color: transparent;
+    border-left: 2px solid transparent;
+}
+
+#entry:selected {
+    background-color: #173830;
+    border-left: 2px solid #48e5c2;
+}
+
+#entry:selected #text {
+    color: #48e5c2;
+    font-weight: bold;
+    text-shadow: 0 0 6px rgba(72, 229, 194, 0.6);
+}

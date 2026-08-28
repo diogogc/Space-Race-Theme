@@ -1,0 +1,65 @@
+/* NASA Flight Operations Wofi Style */
+window {
+    margin: 0px;
+    background-color: rgba(10, 13, 18, 0.98);
+    border: 2px solid #ffb000;
+    border-radius: 4px;
+    font-family: 'JetBrainsMono Nerd Font', 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    box-shadow: 0 0 16px rgba(0, 0, 0, 0.95);
+}
+
+#outer-box {
+    margin: 10px;
+    background-color: transparent;
+}
+
+#input {
+    margin: 4px 4px 10px 4px;
+    padding: 8px 12px;
+    border: 1px solid #263040;
+    border-radius: 3px;
+    color: #ffb000;
+    background-color: #06080b;
+    font-weight: bold;
+}
+
+#input:focus {
+    border: 1px solid #ffb000;
+    box-shadow: 0 0 6px rgba(255, 176, 0, 0.35);
+}
+
+#inner-box {
+    margin: 2px;
+    background-color: #0d1017;
+    border: 1px solid #263040;
+    border-radius: 3px;
+}
+
+#scroll {
+    margin: 0px;
+    background-color: transparent;
+}
+
+#text {
+    margin: 4px 8px;
+    color: #c89220;
+}
+
+#entry {
+    padding: 6px 10px;
+    margin: 1px 0px;
+    border-radius: 2px;
+    background-color: transparent;
+    border-left: 2px solid transparent;
+}
+
+#entry:selected {
+    background-color: #241e0c;
+    border-left: 2px solid #ffb000;
+}
+
+#entry:selected #text {
+    color: #ffb000;
+    font-weight: bold;
+}

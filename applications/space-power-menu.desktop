@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Apollo Flight Operations (Power & Abort)
+GenericName=Power Menu & Session Dispatch
+Comment=Apollo Mission Control Shutdown, Reboot, Suspend, Lock, and Logout
+Exec=/home/diogo/.local/bin/space-power-menu
+Icon=system-shutdown
+Terminal=false
+Type=Application
+Categories=System;
+Keywords=power;shutdown;reboot;lock;logout;suspend;abort;exit;
+StartupWMClass=space-power-menu

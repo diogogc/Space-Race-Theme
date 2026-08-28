@@ -1,0 +1,32 @@
+[global]
+    font = JetBrainsMono Nerd Font 10
+    allow_markup = yes
+    format = "<b>%s</b>\n%b"
+    sort = yes
+    indicate_hidden = yes
+    alignment = left
+    geometry = "360x10-20+45"
+    transparency = 5
+    idle_threshold = 120
+    padding = 12
+    horizontal_padding = 14
+    separator_color = "#402800"
+    corner_radius = 0
+
+[urgency_low]
+    background = "#0e1014"
+    foreground = "#c77c00"
+    frame_color = "#7a4c00"
+    timeout = 4
+
+[urgency_normal]
+    background = "#0e1014"
+    foreground = "#ff9e00"
+    frame_color = "#ff9e00"
+    timeout = 6
+
+[urgency_critical]
+    background = "#1a0808"
+    foreground = "#ff5533"
+    frame_color = "#ff3300"
+    timeout = 0

@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control - Subsystem Flight Lifecycle Teleprinter
+Console/Terminal Frameless Flight Controller Teleprinter
+Provides authentic Apollo flight controller callouts with live hardware/system telemetry
+across Boot (Go / No-Go), Shutdown (De-orbit / Power-down), and Reboot (Stage Re-ignition).
+"""
+import sys, os, time, subprocess, shutil, re
+
+# Color codes
+ESC = "\033["
+RESET = f"{ESC}0m"
+BOLD = f"{ESC}1m"
+DIM = f"{ESC}2m"
+BLINK = f"{ESC}5m"
+
+# Palette mappings
+def get_palette():
+    theme_file = os.path.expanduser("~/.config/themes/current_theme")
+    theme = "nasa"
+    if os.path.isfile(theme_file):
+        try:
+            with open(theme_file, "r") as f:
+                t = f.read().strip()
+                if t in ("nasa", "crt-amber", "crt-green", "kosmos-vfd"):
+                    theme = t
+        except Exception:
+            pass
+
+    if theme == "crt-amber":
+        return {
+            "accent": f"{ESC}38;2;255;158;0m",
+            "accent_bold": f"{ESC}1;38;2;255;158;0m",
+            "dim": f"{ESC}38;2;140;85;0m",
+            "green": f"{ESC}1;38;2;255;170;0m",
+            "red": f"{ESC}1;38;2;255;68;34m",
+            "blue": f"{ESC}1;38;2;255;190;50m",
+            "bg": f"{ESC}48;2;6;7;9m",
+            "white": f"{ESC}38;2;230;142;0m",
+        }
+    elif theme == "crt-green":
+        return {
+            "accent": f"{ESC}38;2;51;255;51m",
+            "accent_bold": f"{ESC}1;38;2;51;255;51m",
+            "dim": f"{ESC}38;2;24;102;24m",
+            "green": f"{ESC}1;38;2;51;255;51m",
+            "red": f"{ESC}1;38;2;255;68;68m",
+            "blue": f"{ESC}1;38;2;80;255;140m",
+            "bg": f"{ESC}48;2;4;7;4m",
+            "white": f"{ESC}38;2;40;204;40m",
+        }
+    elif theme == "kosmos-vfd":
+        return {
+            "accent": f"{ESC}38;2;72;229;194m",
+            "accent_bold": f"{ESC}1;38;2;72;229;194m",
+            "dim": f"{ESC}38;2;34;107;92m",
+            "green": f"{ESC}1;38;2;72;229;194m",
+            "red": f"{ESC}1;38;2;255;72;96m",
+            "blue": f"{ESC}1;38;2;100;210;255m",
+            "bg": f"{ESC}48;2;7;16;14m",
+            "white": f"{ESC}38;2;200;240;230m",
+        }
+    else:  # nasa
+        return {
+            "accent": f"{ESC}38;2;255;176;0m",
+            "accent_bold": f"{ESC}1;38;2;255;176;0m",
+            "dim": f"{ESC}38;2;120;90;40m",
+            "green": f"{ESC}1;38;2;46;247;136m",
+            "red": f"{ESC}1;38;2;255;59;48m",
+            "blue": f"{ESC}1;38;2;56;189;248m",
+            "bg": f"{ESC}48;2;10;13;18m",
+            "white": f"{ESC}38;2;226;232;240m",
+        }
+
+def get_telemetry():
+    telemetry = {}
+    
+    # 1. Booster (Kernel & Memory)
+    try:
+        uname = os.uname().release
+        with open('/proc/meminfo') as f:
+            lines = f.readlines()
+        total_kb = int(re.search(r'\d+', lines[0]).group())
+        avail_kb = int(re.search(r'\d+', lines[2]).group())
+        used_gb = (total_kb - avail_kb) / 1048576.0
+        total_gb = total_kb / 1048576.0
+        telemetry['booster'] = f"{uname} // {total_gb:.1f}GB RAM ({used_gb:.1f}GB IN-USE)"
+        telemetry['booster_down'] = f"KERNEL RELEASED // CORES PARKED"
+        telemetry['booster_reboot'] = f"STAGE 2 HARDWARE RESET ARMED"
+    except Exception:
+        telemetry['booster'] = "LINUX-ARCH // 64-BIT DUAL CHANNEL"
+        telemetry['booster_down'] = "KERNEL CORES SECURED"
+        telemetry['booster_reboot'] = "STAGE RE-IGNITION ARMED"
+
+    # 2. Guidance (Init / Clock / RTC)
+    try:
+        with open('/proc/uptime') as f:
+            uptime = float(f.read().split()[0])
+        telemetry['guidance'] = f"CLOCK SYNC // MET T+{uptime:.2f}s // ACC 100%"
+        telemetry['guidance_down'] = f"MET T+{uptime:.1f}s FINALIZED // RTC SAVED"
+        telemetry['guidance_reboot'] = f"MET T+{uptime:.1f}s HANDOFF // RTC SYNCED"
+    except Exception:
+        telemetry['guidance'] = "AGC CLOCK LOCK // MET NOMINAL"
+        telemetry['guidance_down'] = "RTC HARDWARE SYNCED // MET STORED"
+        telemetry['guidance_reboot'] = "RTC CALIBRATION HANDOFF READY"
+
+    # 3. FIDO (Filesystem / Root Mount)
+    try:
+        st = os.statvfs('/')
+        free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
+        total_gb = (st.f_blocks * st.f_frsize) / (1024**3)
+        telemetry['fido'] = f"BTRFS ROOT RW // {free_gb:.1f}GB FREE OF {total_gb:.1f}GB"
+        telemetry['fido_down'] = f"BTRFS BUFFERS COMMITTED // SYNC OK"
+        telemetry['fido_reboot'] = f"BTRFS JOURNAL COMMITTED // CLEAN"
+    except Exception:
+        telemetry['fido'] = "ROOT-FS MOUNTED RW // NVME NOMINAL"
+        telemetry['fido_down'] = "STORAGE CACHES FLUSHED // SYNC"
+        telemetry['fido_reboot'] = "STORAGE CACHES COMMITTED"
+
+    # 4. EECOM (Power & Thermals)
+    try:
+        power_str = "MAIN-BUS AC NOMINAL"
+        for p in os.listdir('/sys/class/power_supply'):
+            if p.startswith('BAT'):
+                with open(f'/sys/class/power_supply/{p}/capacity') as f:
+                    cap = f.read().strip()
+                with open(f'/sys/class/power_supply/{p}/status') as f:
+                    stat = f.read().strip()
+                power_str = f"BAT {cap}% [{stat.upper()}]"
+                break
+        temp = "38°C"
+        for t in os.listdir('/sys/class/thermal'):
+            if t.startswith('thermal_zone'):
+                with open(f'/sys/class/thermal/{t}/temp') as f:
+                    temp_c = int(f.read().strip()) // 1000
+                    temp = f"{temp_c}°C"
+                    break
+        telemetry['eecom'] = f"{power_str} // CORE {temp} // VOLTAGE NOMINAL"
+        telemetry['eecom_down'] = f"{power_str} // DE-ENERGIZING"
+        telemetry['eecom_reboot'] = f"{power_str} // SURGE CALIBRATED"
+    except Exception:
+        telemetry['eecom'] = "POWER-BUS 28V DC // THERMALS NOMINAL"
+        telemetry['eecom_down'] = "MAIN-BUS DISENGAGED // POWER-DOWN"
+        telemetry['eecom_reboot'] = "VOLTAGE REGULATOR PREPARED"
+
+    # 5. TELMU (Comms / Network)
+    try:
+        ip_out = subprocess.check_output(['ip', '-br', 'addr'], text=True).strip().splitlines()
+        active_if = "OFFLINE"
+        for line in ip_out:
+            parts = line.split()
+            if len(parts) >= 3 and parts[1] == "UP" and not parts[0].startswith("lo"):
+                active_if = f"{parts[0].upper()} [{parts[2].split('/')[0]}]"
+                break
+        telemetry['telmu'] = f"COMMS LINK // {active_if}"
+        telemetry['telmu_down'] = f"UPLINK DISENGAGED // {active_if.split()[0]} OFF"
+        telemetry['telmu_reboot'] = f"LINK STAGED FOR RECONNECT"
+    except Exception:
+        telemetry['telmu'] = "VHF/UHF UPLINK READY"
+        telemetry['telmu_down'] = "TELEMETRY BUS DISENGAGED"
+        telemetry['telmu_reboot'] = "TELEMETRY LINK QUEUED"
+
+    # 6. CAPCOM (Audio / Voice)
+    try:
+        pw = subprocess.getoutput("pgrep -x pipewire || pgrep -x wireplumber").strip()
+        telemetry['capcom'] = "PIPEWIRE / WIREPLUMBER // INTERCOM READY" if pw else "ALSA/PIPEWIRE AUDIO BUS READY"
+        telemetry['capcom_down'] = "AUDIO CHANNELS MUTED // PARKED"
+        telemetry['capcom_reboot'] = "PIPEWIRE STAGED FOR RESTART"
+    except Exception:
+        telemetry['capcom'] = "INTERCOM AUDIO CHANNEL READY"
+        telemetry['capcom_down'] = "INTERCOM CHANNELS SECURED"
+        telemetry['capcom_reboot'] = "AUDIO ENDPOINTS ARMED"
+
+    # 7. GNC (Guidance, Navigation, Security & Auth)
+    try:
+        polkit = subprocess.getoutput("pgrep -f polkit").strip()
+        telemetry['gnc'] = "PAM / POLKIT SECURITY ENGINE // ENFORCED" if polkit else "SECURITY SUB-BUS ARMED"
+        telemetry['gnc_down'] = "AUTH SESSIONS REVOKED // SECURED"
+        telemetry['gnc_reboot'] = "SECURITY CONTEXT RE-ARMED"
+    except Exception:
+        telemetry['gnc'] = "SECURITY DAEMON READY"
+        telemetry['gnc_down'] = "AUTH TOKENS PURGED // SECURED"
+        telemetry['gnc_reboot'] = "AUTH ENGINE RE-STAGED"
+
+    # 8. RETRO (Display / Graphics Compositor)
+    try:
+        cards = os.listdir('/sys/class/drm')
+        gpu_str = "INTEL-KMS DRM // WAYLAND COMPOSITOR"
+        for c in cards:
+            if 'card0' in c and not '-' in c:
+                gpu_str = f"KMS ACCEL ({c}) // HYPRLAND READY"
+                break
+        telemetry['retro'] = gpu_str
+        telemetry['retro_down'] = "SURFACES RELEASED // KMS IDLE"
+        telemetry['retro_reboot'] = "KMS BUFFERS CLEARED // RECYCLED"
+    except Exception:
+        telemetry['retro'] = "DRM KMS ACCELERATION READY"
+        telemetry['retro_down'] = "WAYLAND SURFACES PARKED"
+        telemetry['retro_reboot'] = "COMPOSITOR CONTEXT RECYCLED"
+
+    return telemetry
+
+BOOT_SUBSYSTEMS = [
+    ("01", "BOOSTER",  "KERNEL & MEMORY SUB-BUS",    "booster",   "[  GO  ]"),
+    ("02", "GUIDANCE", "AGC TIMERS & REAL-TIME RTC",  "guidance",  "[  GO  ]"),
+    ("03", "FIDO",     "FLIGHT DYNAMICS & ROOT-FS",   "fido",      "[  GO  ]"),
+    ("04", "EECOM",    "ELECTRICAL & POWER-BUS",      "eecom",     "[  GO  ]"),
+    ("05", "TELMU",    "TELEMETRY & NETWORK COMMS",   "telmu",     "[  GO  ]"),
+    ("06", "CAPCOM",   "CAPSULE COMMS & AUDIO",       "capcom",    "[  GO  ]"),
+    ("07", "GNC",      "SECURITY, PAM & AUTH ENGINE", "gnc",       "[  GO  ]"),
+    ("08", "RETRO",    "DISPLAY SERVER & GRAPHICS",   "retro",     "[  GO  ]"),
+]
+
+SHUTDOWN_SUBSYSTEMS = [
+    ("08", "RETRO",    "WAYLAND COMPOSITOR & DRM",    "retro_down",    "[PARKED]"),
+    ("07", "GNC",      "SECURITY & PAM AUTH ENGINE",  "gnc_down",      "[SECURED]"),
+    ("06", "CAPCOM",   "CAPSULE COMMS & AUDIO BUS",   "capcom_down",   "[MUTED]"),
+    ("05", "TELMU",    "TELEMETRY & NETWORK LINKS",   "telmu_down",    "[OFFLINE]"),
+    ("04", "EECOM",    "POWER-BUS & THERMAL CONTROL", "eecom_down",    "[STANDBY]"),
+    ("03", "FIDO",     "ROOT-FS & STORAGE BUFFERS",   "fido_down",     "[FLUSHED]"),
+    ("02", "GUIDANCE", "AGC TIMERS & REAL-TIME RTC",  "guidance_down", "[SAVED]"),
+    ("01", "BOOSTER",  "KERNEL & CORE ARCHITECTURE",  "booster_down",  "[HALTED]"),
+]
+
+REBOOT_SUBSYSTEMS = [
+    ("08", "RETRO",    "WAYLAND COMPOSITOR & DRM",    "retro_reboot",    "[RECYCLED]"),
+    ("07", "GNC",      "SECURITY & PAM AUTH ENGINE",  "gnc_reboot",      "[RESET]"),
+    ("06", "CAPCOM",   "CAPSULE COMMS & AUDIO BUS",   "capcom_reboot",   "[ARMED]"),
+    ("05", "TELMU",    "TELEMETRY & NETWORK LINKS",   "telmu_reboot",    "[RECONNECT]"),
+    ("04", "EECOM",    "POWER-BUS VOLTAGE REGULATOR", "eecom_reboot",    "[SURGE-OK]"),
+    ("03", "FIDO",     "ROOT-FS & STORAGE JOURNAL",   "fido_reboot",     "[SYNCED]"),
+    ("02", "GUIDANCE", "AGC TIMERS & REAL-TIME RTC",  "guidance_reboot", "[HANDOFF]"),
+    ("01", "BOOSTER",  "KERNEL RE-IGNITION TRIGGER",  "booster_reboot",  "[IGNITION]"),
+]
+
+def detect_shutdown_action():
+    """Detect whether systemd is performing a reboot or a shutdown/poweroff."""
+    try:
+        # Check systemctl list-jobs or active targets
+        out = subprocess.getoutput("systemctl list-jobs 2>/dev/null").lower()
+        if "reboot.target" in out:
+            return "reboot"
+        if "poweroff.target" in out or "halt.target" in out or "shutdown.target" in out:
+            return "shutdown"
+    except Exception:
+        pass
+    
+    # Check /run/systemd/reboot-param
+    if os.path.exists("/run/systemd/reboot-param"):
+        return "reboot"
+        
+    return "shutdown"
+
+def run_flight_poll(mode="boot", poll_delay=None, hold_time=None, is_hardware_action=False):
+    pal = get_palette()
+    telem = get_telemetry()
+
+    if mode == "auto":
+        mode = detect_shutdown_action()
+
+    # Configure sublist and labels
+    if mode in ("shutdown", "poweroff", "halt"):
+        subsystems = SHUTDOWN_SUBSYSTEMS
+        title_main = "APOLLO GUIDANCE COMPUTER // FLIGHT TERMINATION & POWER-DOWN"
+        title_sub = "MISSION: APOLLO HYPRLAND OS // FLIGHT DIRECTOR DISPATCH"
+        poll_tag = "[SECURING]"
+        status_color = pal['accent_bold']
+        final_msg = ">>> FLIGHT: ALL SUBSYSTEMS SECURED. POWERING DOWN APOLLO COMPUTER. <<<"
+        final_color = pal['red']
+        default_delay = (0.18, 0.12) if is_hardware_action else (0.24, 0.16)
+        default_hold = 2.5 if is_hardware_action else 3.0
+    elif mode in ("reboot", "restart"):
+        subsystems = REBOOT_SUBSYSTEMS
+        title_main = "APOLLO GUIDANCE COMPUTER // STAGE SEPARATION & RE-IGNITION"
+        title_sub = "MISSION: APOLLO HYPRLAND OS // FLIGHT DIRECTOR DISPATCH"
+        poll_tag = "[CYCLING]"
+        status_color = pal['blue']
+        final_msg = ">>> FLIGHT: RE-IGNITION AUTHORIZED. REBOOTING FLIGHT COMPUTER. <<<"
+        final_color = pal['green']
+        default_delay = (0.18, 0.12) if is_hardware_action else (0.24, 0.16)
+        default_hold = 2.5 if is_hardware_action else 3.0
+    else:  # boot
+        subsystems = BOOT_SUBSYSTEMS
+        title_main = "APOLLO GUIDANCE COMPUTER // FLIGHT READINESS POLL"
+        title_sub = "MISSION: APOLLO HYPRLAND OS // FLIGHT DIRECTOR CONSOLE"
+        poll_tag = "[POLLING..]"
+        status_color = pal['green']
+        final_msg = ">>> FLIGHT: ALL SUBSYSTEMS ARE GO FOR HYPRLAND LAUNCH <<<"
+        final_color = pal['green']
+        default_delay = (0.28, 0.20) if is_hardware_action else (0.30, 0.22)
+        default_hold = 4.0 if is_hardware_action else 3.5
+
+    if poll_delay is not None:
+        interrogate_delay = poll_delay * 0.6
+        confirm_delay = poll_delay * 0.4
+    else:
+        interrogate_delay, confirm_delay = default_delay
+
+    if hold_time is not None:
+        final_hold = hold_time
+    else:
+        final_hold = default_hold
+
+    # Detect terminal dimensions
+    term = shutil.get_terminal_size((80, 24))
+    cols = term.columns
+    rows = term.lines
+
+    # Table layout dimensions
+    BLOCK_WIDTH = 86
+    TOTAL_LINES = 17
+
+    left_margin = max(0, (cols - BLOCK_WIDTH) // 2)
+    top_margin = max(0, (rows - TOTAL_LINES) // 2)
+    pad = " " * left_margin
+
+    bar = "=" * BLOCK_WIDTH
+    thin_bar = "-" * BLOCK_WIDTH
+
+    # Clear terminal screen and hide cursor
+    sys.stdout.write(f"{ESC}2J{ESC}H{ESC}?25l")
+    
+    # Vertical centering padding
+    if top_margin > 0:
+        sys.stdout.write("\n" * top_margin)
+    sys.stdout.flush()
+
+    # Header
+    print(f"{pad}{pal['accent_bold']}{bar}{RESET}")
+    print(f"{pad}{pal['accent_bold']}  {title_main}{RESET}")
+    print(f"{pad}{pal['dim']}  {title_sub}{RESET}")
+    print(f"{pad}{pal['accent_bold']}{bar}{RESET}")
+    print(f"{pad}{pal['dim']}  NO.  STATION   SUBSYSTEM DESCRIPTION          STATUS       TELEMETRY READOUT{RESET}")
+    print(f"{pad}{pal['dim']}{thin_bar}{RESET}")
+    time.sleep(0.2)
+
+    # Sequence through each controller
+    for code, station, desc, key, ok_tag in subsystems:
+        # Step 1: Polling / Securing state
+        line_start = f"{pad}  [{code}] {pal['accent_bold']}{station:<9}{RESET} {pal['white']}{desc:<28}{RESET}"
+        sys.stdout.write(f"\r{ESC}2K{line_start} {pal['dim']}{poll_tag:<10}{RESET}  {pal['dim']}INTERROGATING...{RESET}")
+        sys.stdout.flush()
+        time.sleep(interrogate_delay)
+
+        # Step 2: Confirmed status
+        readout = telem.get(key, "NOMINAL")
+        if len(readout) > 28:
+            readout = readout[:26] + ".."
+        sys.stdout.write(f"\r{ESC}2K{line_start} {status_color}{ok_tag:<10}{RESET}   {pal['dim']}{readout:<28}{RESET}\n")
+        sys.stdout.flush()
+        time.sleep(confirm_delay)
+
+    # Final Flight Director Call
+    print(f"{pad}{pal['dim']}{thin_bar}{RESET}")
+    time.sleep(0.3)
+    
+    print(f"{pad}{final_color}{BOLD}  {final_msg}{RESET}")
+    print(f"{pad}{pal['accent_bold']}{bar}{RESET}")
+    
+    # Show cursor again
+    sys.stdout.write(f"{ESC}?25h\n")
+    sys.stdout.flush()
+    
+    # Hold for viewing full flight board
+    time.sleep(final_hold)
+
+if __name__ == "__main__":
+    mode = "boot"
+    poll_delay = None
+    hold_time = None
+    is_hardware = False
+    
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--boot", "boot"):
+            mode = "boot"
+            is_hardware = True
+        elif arg in ("--shutdown", "shutdown", "--poweroff", "poweroff", "--halt", "halt"):
+            mode = "shutdown"
+            is_hardware = True
+        elif arg in ("--reboot", "reboot", "--restart", "restart"):
+            mode = "reboot"
+            is_hardware = True
+        elif arg in ("--shutdown-auto", "--auto", "auto"):
+            mode = "auto"
+            is_hardware = True
+        elif arg == "--simulate":
+            mode = "boot"
+            is_hardware = False
+        elif arg in ("--simulate-shutdown", "--simulate-poweroff"):
+            mode = "shutdown"
+            is_hardware = False
+        elif arg == "--simulate-reboot":
+            mode = "reboot"
+            is_hardware = False
+        elif arg in ("--action", "-a") and i + 1 < len(args):
+            act = args[i + 1].lower()
+            if "reboot" in act:
+                mode = "reboot"
+            elif "poweroff" in act or "halt" in act or "shutdown" in act:
+                mode = "shutdown"
+            else:
+                mode = "shutdown"
+            is_hardware = True
+            i += 1
+        elif arg == "--quick":
+            poll_delay = 0.05
+            hold_time = 0.2
+        elif arg == "--delay" and i + 1 < len(args):
+            poll_delay = float(args[i + 1])
+            i += 1
+        elif arg == "--hold" and i + 1 < len(args):
+            hold_time = float(args[i + 1])
+            i += 1
+        i += 1
+        
+    run_flight_poll(mode=mode, poll_delay=poll_delay, hold_time=hold_time, is_hardware_action=is_hardware)

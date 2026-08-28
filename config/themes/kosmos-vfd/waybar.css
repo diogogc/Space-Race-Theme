@@ -1,0 +1,95 @@
+/* Soviet Kosmos VFD Theme for Waybar */
+@define-color bg_bar rgba(20, 36, 33, 0.94);
+@define-color bg_card #1c332e;
+@define-color bg_card_hover #264740;
+@define-color fg_primary #48e5c2;
+@define-color fg_muted #689f92;
+@define-color border_color #2d554d;
+
+@define-color vfd_glow #48e5c2;
+@define-color vfd_cyan #48e5c2;
+@define-color dial_cream #f4eedb;
+@define-color alert_red #d90429;
+
+window#waybar {
+    background-color: @bg_bar;
+    border: none;
+    color: @fg_primary;
+    text-shadow: 0 0 3px rgba(72, 229, 194, 0.4);
+}
+
+#custom-theme {
+    background-color: @bg_card;
+    color: @vfd_glow;
+    border: 1px solid @vfd_glow;
+    box-shadow: 0 0 6px rgba(72, 229, 194, 0.3);
+    font-weight: bold;
+}
+
+#custom-telemetry, #custom-met {
+    background-color: @bg_card;
+    color: @dial_cream;
+    border: 1px solid @border_color;
+}
+
+#workspaces button {
+    color: @fg_muted;
+    background: transparent;
+}
+
+#workspaces button.active {
+    background-color: @bg_card;
+    color: @vfd_glow;
+    border-bottom: 2px solid @vfd_glow;
+    text-shadow: 0 0 5px rgba(72, 229, 194, 0.7);
+    font-weight: bold;
+}
+
+#clock, #pulseaudio, #network, #custom-network-telemetry, #custom-power-telemetry, #cpu, #memory {
+    background-color: @bg_card;
+    border: 1px solid @border_color;
+    color: @fg_primary;
+}
+
+#custom-iss {
+    background-color: @bg_card;
+    border: 1px solid @vfd_cyan;
+    color: @vfd_cyan;
+}
+
+#custom-iss.iss-acquired {
+    background-color: #ff0055;
+    border: 1px solid #ff5599;
+    color: #ffffff;
+    font-weight: bold;
+    animation: blink 0.8s infinite alternate;
+}
+
+#custom-iss:hover {
+    background-color: @vfd_cyan;
+    color: #07100e;
+}
+
+#custom-power {
+    background-color: @bg_card;
+    color: @vfd_cyan;
+    border: 1px solid @vfd_cyan;
+    font-weight: bold;
+}
+
+#custom-power:hover {
+    background-color: @vfd_cyan;
+    color: #07100e;
+}
+
+tooltip {
+    background-color: @bg_card;
+    border: 1px solid @vfd_glow;
+    border-radius: 3px;
+    padding: 6px 10px;
+}
+
+tooltip label {
+    color: @fg_primary;
+    text-shadow: 0 0 3px rgba(72, 229, 194, 0.4);
+}

@@ -1,0 +1,586 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Power & Telemetry Abort Menu
+"""
+import sys, os, subprocess, time, signal
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+
+THEMES = {
+    "nasa": {
+        "bg": "#14171d",
+        "bg_card": "#1c222b",
+        "border": "#ffb000",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#8c9ba5",
+        "btn_bg": "#10141a",
+        "btn_border": "#2e3846",
+        "btn_hover": "#263040",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "red": "#ff3333",
+        "radius": "4px",
+    },
+    "crt-amber": {
+        "bg": "#0e1014",
+        "bg_card": "#161920",
+        "border": "#ff9e00",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#734900",
+        "btn_bg": "#08090c",
+        "btn_border": "#402800",
+        "btn_hover": "#241908",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "red": "#ff5533",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#0a100a",
+        "bg_card": "#0f1c0f",
+        "border": "#33ff33",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#050a05",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#102610",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "red": "#ff4444",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#0e1e1a",
+        "bg_card": "#152d27",
+        "border": "#48e5c2",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#081411",
+        "btn_border": "#1f6656",
+        "btn_hover": "#173830",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "red": "#ff4860",
+        "radius": "3px",
+    }
+}
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+ACTIONS = [
+    {
+        "key": "1",
+        "hotkey": "s",
+        "code": "01",
+        "title": "MISSION ABORT // SHUTDOWN",
+        "sub": "De-energize telemetry &amp; complete system power off",
+        "cmd": ["systemctl", "poweroff"],
+        "urgent": True,
+        "confirm": True
+    },
+    {
+        "key": "2",
+        "hotkey": "r",
+        "code": "02",
+        "title": "STAGE RE-IGNITION // REBOOT",
+        "sub": "Restart flight computer &amp; reload kernel telemetry",
+        "cmd": ["systemctl", "reboot"],
+        "urgent": False,
+        "confirm": True
+    },
+    {
+        "key": "3",
+        "hotkey": "u",
+        "code": "03",
+        "title": "ORBITAL STANDBY // SUSPEND",
+        "sub": "Low-power sleep state with memory retention",
+        "cmd": ["systemctl", "suspend"],
+        "urgent": False,
+        "confirm": False
+    },
+    {
+        "key": "4",
+        "hotkey": "l",
+        "code": "04",
+        "title": "FLIGHT LOCK // SECURE CONSOLE",
+        "sub": "Engage Apollo AGC DSKY lockscreen (hyprlock)",
+        "cmd": ["sh", "-c", "command -v hyprlock >/dev/null 2>&1 && hyprlock || (command -v swaylock >/dev/null 2>&1 && swaylock || loginctl lock-session)"],
+        "urgent": False,
+        "confirm": False
+    },
+    {
+        "key": "5",
+        "hotkey": "e",
+        "code": "05",
+        "title": "MISSION LOGOUT // DISPATCH EXIT",
+        "sub": "Terminate Hyprland compositor session",
+        "cmd": ["hyprctl", "dispatch", "exit"],
+        "urgent": False,
+        "confirm": True
+    }
+]
+
+class SpacePowerMenu(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Apollo Mission Control Session & Flight Dispatch")
+        self.set_wmclass("space-power-menu", "space-power-menu")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(520, 480)
+
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+        self.selected_idx = 0
+        self.buttons = []
+        self.in_confirm = False
+        self.pending_action = None
+        self.confirm_btn_idx = 0  # 0: confirm, 1: cancel
+        self.confirm_btns = []
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_card']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 14px 20px;
+        }}
+        .action-row {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 16px;
+            transition: all 0.15s ease;
+        }}
+        .action-row.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .action-row.urgent.selected {{
+            border: 1px solid {self.pal['red']};
+        }}
+        .confirm-card {{
+            background-color: {self.pal['bg_card']};
+            border: 2px solid {self.pal['red']};
+            border-radius: {self.pal['radius']};
+            padding: 20px;
+        }}
+        .confirm-card.nominal {{
+            border: 2px solid {self.pal['accent']};
+        }}
+        .confirm-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 12px 18px;
+            transition: all 0.15s ease;
+        }}
+        .confirm-btn.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .confirm-btn.urgent.selected {{
+            background-color: #3b1111;
+            border: 1px solid {self.pal['red']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(150)
+        self.add(self.stack)
+
+        self.build_main_view()
+        self.build_confirm_view()
+        self.stack.set_visible_child_name("menu")
+
+    def build_main_view(self):
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Header
+        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        header_box.get_style_context().add_class("header-box")
+
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup(f"<span font_weight='bold' font_size='12000' foreground='{self.pal['text_main']}'>🚀 APOLLO MISSION CONTROL // FLIGHT OPERATIONS (OPP)</span>")
+        title_lbl.set_xalign(0.0)
+        header_box.pack_start(title_lbl, False, False, 0)
+
+        # Telemetry line
+        utc_str = time.strftime('%H:%M:%S UTC', time.gmtime())
+        uptime_str = "NOMINAL"
+        try:
+            if os.path.exists("/proc/uptime"):
+                with open("/proc/uptime", "r") as f:
+                    up_secs = float(f.readline().split()[0])
+                days = int(up_secs // 86400)
+                hours = int((up_secs % 86400) // 3600)
+                mins = int((up_secs % 3600) // 60)
+                if days > 0:
+                    uptime_str = f"{days}d {hours}h {mins}m"
+                elif hours > 0:
+                    uptime_str = f"{hours}h {mins}m"
+                else:
+                    uptime_str = f"{mins}m"
+        except Exception:
+            uptime_str = "NOMINAL"
+
+        telemetry_lbl = Gtk.Label()
+        telemetry_lbl.set_markup(f"<span font_size='9000' foreground='{self.pal['green']}'>[ MET: {uptime_str} ]</span> <span font_size='9000' foreground='{self.pal['text_dim']}'>| UTC: {utc_str} | PROFILE: {self.theme_name.upper()}</span>")
+        telemetry_lbl.set_xalign(0.0)
+        header_box.pack_start(telemetry_lbl, False, False, 0)
+
+        main_vbox.pack_start(header_box, False, False, 0)
+
+        # Action list container
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        actions_box.set_margin_top(16)
+        actions_box.set_margin_bottom(16)
+        actions_box.set_margin_left(20)
+        actions_box.set_margin_right(20)
+
+        for i, act in enumerate(ACTIONS):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("action-row")
+            if act["urgent"]:
+                btn.get_style_context().add_class("urgent")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+            btn.add(row_box)
+
+            badge_lbl = Gtk.Label()
+            badge_color = self.pal['red'] if act['urgent'] else self.pal['accent']
+            badge_lbl.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{badge_color}'>[{act['key']}]</span>")
+            row_box.pack_start(badge_lbl, False, False, 0)
+
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            title_act = Gtk.Label()
+            t_color = self.pal['red'] if act['urgent'] else self.pal['text_main']
+            title_act.set_markup(f"<span font_weight='bold' font_size='10500' foreground='{t_color}'>{act['title']}</span>")
+            title_act.set_xalign(0.0)
+            text_vbox.pack_start(title_act, False, False, 0)
+
+            sub_act = Gtk.Label()
+            sub_act.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>{act['sub']}</span>")
+            sub_act.set_xalign(0.0)
+            text_vbox.pack_start(sub_act, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_action(idx))
+            self.buttons.append(btn)
+            actions_box.pack_start(btn, False, False, 0)
+
+        main_vbox.pack_start(actions_box, True, True, 0)
+
+        # Footer instructions
+        footer_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer_box.set_margin_bottom(12)
+        footer_box.set_margin_left(20)
+        footer_box.set_margin_right(20)
+
+        hint_lbl = Gtk.Label()
+        hint_lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ ENTER / 1-5 ] ENGAGE   [ ESC / Q ] ABORT</span>")
+        hint_lbl.set_xalign(0.5)
+        footer_box.pack_start(hint_lbl, True, True, 0)
+
+        main_vbox.pack_start(footer_box, False, False, 0)
+        self.stack.add_named(main_vbox, "menu")
+        self.update_selection()
+
+    def build_confirm_view(self):
+        confirm_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Confirm Header
+        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        header_box.get_style_context().add_class("header-box")
+
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup(f"<span font_weight='bold' font_size='12000' foreground='{self.pal['red']}'>⚠️ APOLLO FLIGHT OPERATIONS // DISPATCH AUTHORIZATION</span>")
+        title_lbl.set_xalign(0.0)
+        header_box.pack_start(title_lbl, False, False, 0)
+
+        sub_lbl = Gtk.Label()
+        sub_lbl.set_markup(f"<span font_size='9000' foreground='{self.pal['text_dim']}'>CRITICAL STAGE TRANSITION VERIFICATION REQUIRED</span>")
+        sub_lbl.set_xalign(0.0)
+        header_box.pack_start(sub_lbl, False, False, 0)
+
+        confirm_vbox.pack_start(header_box, False, False, 0)
+
+        # Card container
+        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        center_box.set_margin_top(24)
+        center_box.set_margin_bottom(20)
+        center_box.set_margin_left(20)
+        center_box.set_margin_right(20)
+
+        self.confirm_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.confirm_card.get_style_context().add_class("confirm-card")
+
+        self.confirm_title = Gtk.Label()
+        self.confirm_title.set_xalign(0.0)
+        self.confirm_card.pack_start(self.confirm_title, False, False, 0)
+
+        self.confirm_sub = Gtk.Label()
+        self.confirm_sub.set_xalign(0.0)
+        self.confirm_card.pack_start(self.confirm_sub, False, False, 0)
+
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep.set_margin_top(4)
+        sep.set_margin_bottom(4)
+        self.confirm_card.pack_start(sep, False, False, 0)
+
+        self.confirm_desc = Gtk.Label()
+        self.confirm_desc.set_markup(f"<span font_size='9000' foreground='{self.pal['text_sub']}'>Are you sure you want to execute this flight dispatch command? Active unsaved work and telemetry sessions will be stopped.</span>")
+        self.confirm_desc.set_xalign(0.0)
+        self.confirm_desc.set_line_wrap(True)
+        self.confirm_card.pack_start(self.confirm_desc, False, False, 0)
+
+        center_box.pack_start(self.confirm_card, True, True, 0)
+
+        # Buttons Box
+        btns_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        btns_box.set_homogeneous(True)
+
+        # Confirm Button (Y / Enter)
+        self.btn_confirm = Gtk.EventBox()
+        self.btn_confirm.get_style_context().add_class("confirm-btn")
+        btn_confirm_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.lbl_confirm_btn = Gtk.Label()
+        self.lbl_confirm_btn.set_markup(f"<span font_weight='bold' foreground='{self.pal['red']}'>[ Y / ENTER ] CONFIRM &amp; EXECUTE</span>")
+        btn_confirm_box.pack_start(self.lbl_confirm_btn, True, True, 0)
+        self.btn_confirm.add(btn_confirm_box)
+        self.btn_confirm.connect("button-press-event", lambda w, e: self.do_execute(self.pending_action))
+
+        # Cancel Button (N / Esc)
+        self.btn_cancel = Gtk.EventBox()
+        self.btn_cancel.get_style_context().add_class("confirm-btn")
+        btn_cancel_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl_cancel_btn = Gtk.Label()
+        lbl_cancel_btn.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_sub']}'>[ N / ESC ] ABORT &amp; RETURN</span>")
+        btn_cancel_box.pack_start(lbl_cancel_btn, True, True, 0)
+        self.btn_cancel.add(btn_cancel_box)
+        self.btn_cancel.connect("button-press-event", lambda w, e: self.cancel_confirmation())
+
+        btns_box.pack_start(self.btn_confirm, True, True, 0)
+        btns_box.pack_start(self.btn_cancel, True, True, 0)
+        center_box.pack_start(btns_box, False, False, 0)
+
+        confirm_vbox.pack_start(center_box, True, True, 0)
+
+        # Confirm Footer
+        footer_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer_box.set_margin_bottom(12)
+        footer_box.set_margin_left(20)
+        footer_box.set_margin_right(20)
+
+        hint_lbl = Gtk.Label()
+        hint_lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>[ ←/→ / TAB ] SELECT   [ ENTER / Y ] CONFIRM   [ ESC / N / BKSP ] ABORT</span>")
+        hint_lbl.set_xalign(0.5)
+        footer_box.pack_start(hint_lbl, True, True, 0)
+
+        confirm_vbox.pack_start(footer_box, False, False, 0)
+
+        self.confirm_btns = [self.btn_confirm, self.btn_cancel]
+        self.stack.add_named(confirm_vbox, "confirm")
+
+    def update_selection(self):
+        for i, btn in enumerate(self.buttons):
+            ctx = btn.get_style_context()
+            if i == self.selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def update_confirm_selection(self):
+        for i, btn in enumerate(self.confirm_btns):
+            ctx = btn.get_style_context()
+            if i == self.confirm_btn_idx:
+                ctx.add_class("selected")
+                if i == 0 and self.pending_action and self.pending_action.get("urgent"):
+                    ctx.add_class("urgent")
+                else:
+                    ctx.remove_class("urgent")
+            else:
+                ctx.remove_class("selected")
+                ctx.remove_class("urgent")
+
+    def show_confirmation(self, act):
+        self.pending_action = act
+        self.in_confirm = True
+        self.confirm_btn_idx = 0
+
+        t_color = self.pal['red'] if act['urgent'] else self.pal['text_main']
+        self.confirm_title.set_markup(f"<span font_weight='bold' font_size='11500' foreground='{t_color}'>COMMAND: {act['title']}</span>")
+        self.confirm_sub.set_markup(f"<span font_size='9000' foreground='{self.pal['text_dim']}'>DISPATCH TARGET: {act['sub']}</span>")
+        
+        btn_color = self.pal['red'] if act['urgent'] else self.pal['accent']
+        self.lbl_confirm_btn.set_markup(f"<span font_weight='bold' foreground='{btn_color}'>[ Y / ENTER ] CONFIRM &amp; DISPATCH</span>")
+
+        ctx = self.confirm_card.get_style_context()
+        if act['urgent']:
+            ctx.remove_class("nominal")
+        else:
+            ctx.add_class("nominal")
+
+        self.update_confirm_selection()
+        self.stack.set_visible_child_name("confirm")
+
+    def cancel_confirmation(self):
+        self.in_confirm = False
+        self.pending_action = None
+        self.stack.set_visible_child_name("menu")
+        self.update_selection()
+
+    def on_key_press(self, widget, event):
+        keyval = event.keyval
+        keyname = Gdk.keyval_name(keyval)
+
+        if self.in_confirm:
+            if keyname in ["Escape", "n", "N", "BackSpace", "q", "Q"]:
+                self.cancel_confirmation()
+                return True
+            if keyname in ["y", "Y"]:
+                self.do_execute(self.pending_action)
+                return True
+            if keyname in ["Left", "Right", "Tab", "ISO_Left_Tab", "Up", "Down", "j", "k"]:
+                self.confirm_btn_idx = 1 - self.confirm_btn_idx
+                self.update_confirm_selection()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                if self.confirm_btn_idx == 0:
+                    self.do_execute(self.pending_action)
+                else:
+                    self.cancel_confirmation()
+                return True
+            return False
+
+        if keyname in ["Escape", "q", "Q"]:
+            cleanup()
+            Gtk.main_quit()
+            return True
+
+        if keyname in ["Down", "j", "J", "Tab"]:
+            self.selected_idx = (self.selected_idx + 1) % len(ACTIONS)
+            self.update_selection()
+            return True
+
+        if keyname in ["Up", "k", "K", "ISO_Left_Tab"]:
+            self.selected_idx = (self.selected_idx - 1 + len(ACTIONS)) % len(ACTIONS)
+            self.update_selection()
+            return True
+
+        if keyname in ["Return", "KP_Enter", "space"]:
+            self.trigger_action(self.selected_idx)
+            return True
+
+        for i, act in enumerate(ACTIONS):
+            if keyname in [act["key"], act["hotkey"], act["hotkey"].upper()]:
+                self.trigger_action(i)
+                return True
+
+        return False
+
+    def trigger_action(self, idx):
+        act = ACTIONS[idx]
+        if act.get("confirm", False):
+            self.show_confirmation(act)
+        else:
+            self.do_execute(act)
+
+    def do_execute(self, act):
+        if not act:
+            return
+        cmd = act["cmd"]
+        cleanup()
+        self.hide()
+        try:
+            subprocess.Popen(cmd, start_new_session=True)
+        except Exception as e:
+            print(f"Error launching {cmd}: {e}", file=sys.stderr)
+        Gtk.main_quit()
+
+PID_FILE = f"/tmp/space-power-menu-{os.getuid()}.pid"
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def main():
+    check_singleton()
+    win = SpacePowerMenu()
+    win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
+
+

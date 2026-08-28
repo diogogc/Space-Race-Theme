@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=PWR-BUS & Energy Management
+GenericName=Power & Energy Telemetry
+Comment=Apollo MDC-02 Fuel Cells, Battery Telemetry, Voltage & Power Profiles
+Exec=/home/diogo/.local/bin/space-energy-dialog
+Icon=battery
+Terminal=false
+Type=Application
+Categories=System;Settings;HardwareSettings;
+Keywords=power;battery;energy;brightness;backlight;power-profiles;bus;
+StartupWMClass=space-energy-dialog

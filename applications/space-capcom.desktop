@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=CAPCOM Audio & Intercom Console
+GenericName=CAPCOM Audio Intercom
+Comment=Apollo Mission Control Capsule Communicator (CAPCOM), Cabin Intercom & WirePlumber Audio Routing
+Exec=/home/diogo/.local/bin/space-capcom-dialog
+Icon=audio-card
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Mixer;System;
+Keywords=capcom;vox;audio;sound;volume;intercom;pipewire;wireplumber;speaker;mic;microphone;
+StartupWMClass=space-capcom-dialog

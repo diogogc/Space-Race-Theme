@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Stage Re-ignition & Reboot Console
+GenericName=Subsystem Re-ignition Poll
+Comment=Apollo Mission Control Stage Separation & Re-ignition Poll
+Icon=system-reboot
+Exec=kitty --class space-flight-reboot -e /home/diogo/.local/bin/space-flight-poll --simulate-reboot
+Terminal=false
+Categories=Utility;System;
+StartupWMClass=space-flight-reboot

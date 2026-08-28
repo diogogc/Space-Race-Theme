@@ -1,0 +1,1143 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control System Hardware Telemetry & Flight Task Dispatch Console
+Real-time CPU, Per-Core Load, Memory/Swap, Storage Bus, Thermals & Process Operations.
+Inspired by Apollo Mission Operations Control Room (MOCR) Telemetry & Guidance Computers.
+Strict Zero-White-Background Policy & Space Mission Control Palettes across all 4 themes.
+"""
+import sys, os, subprocess, signal, time, threading, re, pwd, warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import cairo
+
+PID_FILE = f"/tmp/space-telemetry-dialog-{os.getuid()}.pid"
+
+THEMES = {
+    "nasa": {
+        "bg": "#0a0d12",
+        "bg_panel": "#11161f",
+        "bg_bezel": "#070a0e",
+        "track_bg": "#030406",
+        "border": "#ffb000",
+        "border_dim": "#263242",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#768696",
+        "btn_bg": "#0a0d12",
+        "btn_border": "#283444",
+        "btn_hover": "#1e2633",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "yellow": "#ffb000",
+        "red": "#ff3b30",
+        "cyan": "#00d2ff",
+        "needle": "#ffb000",
+        "radius": "3px",
+    },
+    "crt-amber": {
+        "bg": "#060709",
+        "bg_panel": "#0d0f14",
+        "bg_bezel": "#040507",
+        "track_bg": "#020304",
+        "border": "#ff9e00",
+        "border_dim": "#402800",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#805200",
+        "btn_bg": "#060709",
+        "btn_border": "#3a2400",
+        "btn_hover": "#221500",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "yellow": "#cca000",
+        "red": "#ff5533",
+        "cyan": "#ffaa22",
+        "needle": "#ff9e00",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#040704",
+        "bg_panel": "#0a110a",
+        "bg_bezel": "#030603",
+        "track_bg": "#010301",
+        "border": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#030603",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#0c240c",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "yellow": "#99ff33",
+        "red": "#ff4444",
+        "cyan": "#55ffaa",
+        "needle": "#33ff33",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#060e0c",
+        "bg_panel": "#0c1b17",
+        "bg_bezel": "#040908",
+        "track_bg": "#020504",
+        "border": "#48e5c2",
+        "border_dim": "#183d34",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#060d0b",
+        "btn_border": "#1a4037",
+        "btn_hover": "#123028",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "yellow": "#d4e09b",
+        "red": "#ff4860",
+        "cyan": "#48e5c2",
+        "needle": "#48e5c2",
+        "radius": "2px",
+    }
+}
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip('#')
+    return tuple(int(hex_str[i:i+2], 16)/255.0 for i in (0, 2, 4))
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                p = int(f.read().strip())
+            if p == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+# ---------------------------------------------------------
+# Telemetry Collector Subsystem
+# ---------------------------------------------------------
+class TelemetryCollector:
+    def __init__(self):
+        self.prev_cpu_times = {}
+        self.prev_time = time.time()
+        self.cpu_model = self._get_cpu_model()
+        self.num_cores = os.cpu_count() or 1
+
+    def _get_cpu_model(self):
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if "model name" in line:
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return "Unknown Processor Core"
+
+    def read_cpu_and_cores(self):
+        now = time.time()
+        dt = max(0.1, now - self.prev_time)
+        overall_usage = 0.0
+        core_usages = []
+
+        try:
+            with open("/proc/stat") as f:
+                for line in f:
+                    if line.startswith("cpu"):
+                        parts = line.split()
+                        name = parts[0]
+                        user = float(parts[1])
+                        nice = float(parts[2])
+                        system = float(parts[3])
+                        idle = float(parts[4])
+                        iowait = float(parts[5]) if len(parts) > 5 else 0.0
+                        irq = float(parts[6]) if len(parts) > 6 else 0.0
+                        softirq = float(parts[7]) if len(parts) > 7 else 0.0
+                        steal = float(parts[8]) if len(parts) > 8 else 0.0
+
+                        busy = user + nice + system + irq + softirq + steal
+                        total = busy + idle + iowait
+
+                        if name in self.prev_cpu_times:
+                            p_busy, p_total = self.prev_cpu_times[name]
+                            diff_total = max(1.0, total - p_total)
+                            diff_busy = max(0.0, busy - p_busy)
+                            pct = (diff_busy / diff_total) * 100.0
+                            pct = max(0.0, min(100.0, pct))
+                        else:
+                            pct = 0.0
+
+                        self.prev_cpu_times[name] = (busy, total)
+
+                        if name == "cpu":
+                            overall_usage = pct
+                        else:
+                            core_usages.append(pct)
+        except Exception:
+            pass
+
+        # Frequencies
+        freqs = []
+        for i in range(self.num_cores):
+            freq_path = f"/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_cur_freq"
+            if os.path.exists(freq_path):
+                try:
+                    with open(freq_path) as f:
+                        freqs.append(int(f.read().strip()) / 1000.0) # MHz
+                except Exception:
+                    pass
+        avg_freq = sum(freqs)/len(freqs) if freqs else 0.0
+
+        # Thermal Core Temp
+        cpu_temp = 0.0
+        for hwmon in sorted(os.listdir("/sys/class/hwmon") if os.path.exists("/sys/class/hwmon") else []):
+            hpath = os.path.join("/sys/class/hwmon", hwmon)
+            for fname in os.listdir(hpath):
+                if fname.startswith("temp") and fname.endswith("_input"):
+                    try:
+                        with open(os.path.join(hpath, fname)) as tf:
+                            raw = int(tf.read().strip())
+                            if 10000 < raw < 120000:
+                                cpu_temp = raw / 1000.0
+                                break
+                    except Exception:
+                        continue
+            if cpu_temp > 0:
+                break
+
+        # Load Averages
+        load1, load5, load15 = 0.0, 0.0, 0.0
+        try:
+            with open("/proc/loadavg") as f:
+                lparts = f.read().split()
+                load1, load5, load15 = float(lparts[0]), float(lparts[1]), float(lparts[2])
+        except Exception:
+            pass
+
+        self.prev_time = now
+        return {
+            "overall": overall_usage,
+            "cores": core_usages,
+            "freq_mhz": avg_freq,
+            "temp_c": cpu_temp,
+            "load_avg": (load1, load5, load15)
+        }
+
+    def read_memory(self):
+        mem = {
+            "total_gb": 0.0, "used_gb": 0.0, "avail_gb": 0.0,
+            "cache_gb": 0.0, "swap_total_gb": 0.0, "swap_used_gb": 0.0,
+            "used_pct": 0.0, "swap_pct": 0.0
+        }
+        try:
+            raw = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        k = parts[0].strip()
+                        v = int(parts[1].split()[0].strip())
+                        raw[k] = v
+
+            total = raw.get("MemTotal", 0)
+            avail = raw.get("MemAvailable", 0)
+            buffers = raw.get("Buffers", 0)
+            cached = raw.get("Cached", 0) + raw.get("SReclaimable", 0)
+            swap_total = raw.get("SwapTotal", 0)
+            swap_free = raw.get("SwapFree", 0)
+
+            used = max(0, total - avail)
+            swap_used = max(0, swap_total - swap_free)
+
+            mem["total_gb"] = total / 1048576.0
+            mem["avail_gb"] = avail / 1048576.0
+            mem["used_gb"] = used / 1048576.0
+            mem["cache_gb"] = (buffers + cached) / 1048576.0
+            mem["swap_total_gb"] = swap_total / 1048576.0
+            mem["swap_used_gb"] = swap_used / 1048576.0
+
+            if total > 0:
+                mem["used_pct"] = (used / total) * 100.0
+            if swap_total > 0:
+                mem["swap_pct"] = (swap_used / swap_total) * 100.0
+        except Exception:
+            pass
+        return mem
+
+    def read_storage(self):
+        disks = []
+        for mount in ["/", "/home"]:
+            if os.path.exists(mount):
+                try:
+                    st = os.statvfs(mount)
+                    total_b = st.f_blocks * st.f_frsize
+                    free_b = st.f_bavail * st.f_frsize
+                    used_b = total_b - free_b
+                    pct = (used_b / total_b) * 100.0 if total_b > 0 else 0.0
+
+                    if any(d["total_gb"] == (total_b / 1073741824.0) for d in disks):
+                        continue
+
+                    disks.append({
+                        "mount": mount,
+                        "total_gb": total_b / 1073741824.0,
+                        "used_gb": used_b / 1073741824.0,
+                        "free_gb": free_b / 1073741824.0,
+                        "pct": pct
+                    })
+                except Exception:
+                    pass
+        return disks
+
+    def read_top_processes(self, limit=30, sort_by="cpu"):
+        procs = []
+        try:
+            cmd = ["ps", "-eo", "pid,user,%cpu,%mem,stat,comm,args", "--no-headers"]
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+            for line in out.strip().splitlines():
+                parts = line.strip().split(None, 6)
+                if len(parts) >= 6:
+                    pid = int(parts[0])
+                    user = parts[1]
+                    try:
+                        cpu = float(parts[2])
+                    except ValueError:
+                        cpu = 0.0
+                    try:
+                        mem = float(parts[3])
+                    except ValueError:
+                        mem = 0.0
+                    stat = parts[4]
+                    comm = parts[5]
+                    args = parts[6] if len(parts) > 6 else comm
+
+                    procs.append({
+                        "pid": pid,
+                        "user": user,
+                        "cpu": cpu,
+                        "mem": mem,
+                        "stat": stat,
+                        "comm": os.path.basename(comm),
+                        "cmd": args
+                    })
+        except Exception:
+            pass
+
+        if sort_by == "mem":
+            procs.sort(key=lambda p: p["mem"], reverse=True)
+        else:
+            procs.sort(key=lambda p: p["cpu"], reverse=True)
+
+        return procs[:limit]
+
+# ---------------------------------------------------------
+# Custom Cairo Hardware Telemetry Gauges
+# ---------------------------------------------------------
+class ApolloCpuMeter(Gtk.DrawingArea):
+    """Phosphor Telemetry Horizontal Bar & Range Indicator for CPU"""
+    def __init__(self, pal):
+        super().__init__()
+        self.set_size_request(340, 56)
+        self.pal = pal
+        self.cpu_pct = 0.0
+        self.temp_c = 0.0
+        self.freq_mhz = 0.0
+
+    def update_values(self, pct, temp_c, freq_mhz):
+        self.cpu_pct = pct
+        self.temp_c = temp_c
+        self.freq_mhz = freq_mhz
+        self.queue_draw()
+
+    def do_draw(self, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.0)
+        cr.rectangle(0, 0, width, height)
+        cr.stroke()
+
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+        yel_r, yel_g, yel_b = hex_to_rgb(self.pal["yellow"])
+        red_r, red_g, red_b = hex_to_rgb(self.pal["red"])
+
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(9.0)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        cr.move_to(8, 14)
+        cr.show_text("⚡ PROCESSOR CORE UTILIZATION")
+
+        val_txt = f"{self.cpu_pct:4.1f}% | {self.freq_mhz/1000.0:3.2f} GHz | {self.temp_c:.0f}°C"
+        col = (grn_r, grn_g, grn_b) if self.cpu_pct < 70 else ((yel_r, yel_g, yel_b) if self.cpu_pct < 85 else (red_r, red_g, red_b))
+        cr.set_source_rgb(*col)
+        ext = cr.text_extents(val_txt)
+        cr.move_to(width - 8 - ext.width, 14)
+        cr.show_text(val_txt)
+
+        track_x = 8
+        track_y = 20
+        track_w = width - 16
+        track_h = 16
+
+        tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+        cr.set_line_width(1.0)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.stroke()
+
+        num_bars = 32
+        active_bars = int((self.cpu_pct / 100.0) * num_bars)
+        bar_spacing = (track_w - 4) / float(num_bars)
+
+        for b in range(active_bars):
+            bx = track_x + 2 + b * bar_spacing
+            bw = max(2.0, bar_spacing - 1.5)
+            if b < int(num_bars * 0.65):
+                cr.set_source_rgba(grn_r, grn_g, grn_b, 0.9)
+            elif b < int(num_bars * 0.85):
+                cr.set_source_rgba(yel_r, yel_g, yel_b, 0.9)
+            else:
+                cr.set_source_rgba(red_r, red_g, red_b, 0.95)
+            cr.rectangle(bx, track_y + 2, bw, track_h - 4)
+            cr.fill()
+
+        for i in range(11):
+            tx = track_x + (i / 10.0) * track_w
+            is_major = (i % 5 == 0)
+            tick_len = 4 if is_major else 2
+            cr.set_source_rgba(acc_r, acc_g, acc_b, 0.7 if is_major else 0.35)
+            cr.set_line_width(1.0)
+            cr.move_to(tx, track_y + track_h + 1)
+            cr.line_to(tx, track_y + track_h + 1 + tick_len)
+            cr.stroke()
+
+            if is_major:
+                val_str = f"{i*10}%"
+                cr.set_font_size(6.5)
+                vext = cr.text_extents(val_str)
+                cr.move_to(tx - vext.width / 2.0, track_y + track_h + 11)
+                cr.show_text(val_str)
+
+        cr.restore()
+        return False
+
+class ApolloMemoryMeter(Gtk.DrawingArea):
+    """Segmented Memory Core Allocation Bar (App Memory / Buffers-Cache / Free)"""
+    def __init__(self, pal):
+        super().__init__()
+        self.set_size_request(340, 56)
+        self.pal = pal
+        self.used_gb = 0.0
+        self.cache_gb = 0.0
+        self.total_gb = 0.0
+        self.used_pct = 0.0
+
+    def update_values(self, used_gb, cache_gb, total_gb, used_pct):
+        self.used_gb = used_gb
+        self.cache_gb = cache_gb
+        self.total_gb = total_gb
+        self.used_pct = used_pct
+        self.queue_draw()
+
+    def do_draw(self, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.0)
+        cr.rectangle(0, 0, width, height)
+        cr.stroke()
+
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+        cyan_r, cyan_g, cyan_b = hex_to_rgb(self.pal["cyan"])
+
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(9.0)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        cr.move_to(8, 14)
+        cr.show_text("💾 AGC MEMORY CORE ALLOCATION")
+
+        val_txt = f"{self.used_gb:.1f}G / {self.total_gb:.1f}G ({self.used_pct:.0f}%)"
+        cr.set_source_rgb(grn_r, grn_g, grn_b)
+        ext = cr.text_extents(val_txt)
+        cr.move_to(width - 8 - ext.width, 14)
+        cr.show_text(val_txt)
+
+        track_x = 8
+        track_y = 20
+        track_w = width - 16
+        track_h = 16
+
+        tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+        cr.set_line_width(1.0)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.stroke()
+
+        if self.total_gb > 0:
+            used_w = (self.used_gb / self.total_gb) * (track_w - 4)
+            cache_w = (self.cache_gb / self.total_gb) * (track_w - 4)
+
+            cr.set_source_rgba(acc_r, acc_g, acc_b, 0.9)
+            cr.rectangle(track_x + 2, track_y + 2, used_w, track_h - 4)
+            cr.fill()
+
+            cr.set_source_rgba(cyan_r, cyan_g, cyan_b, 0.5)
+            cr.rectangle(track_x + 2 + used_w, track_y + 2, min(cache_w, (track_w - 4) - used_w), track_h - 4)
+            cr.fill()
+
+        for i in range(11):
+            tx = track_x + (i / 10.0) * track_w
+            is_major = (i % 5 == 0)
+            tick_len = 4 if is_major else 2
+            cr.set_source_rgba(acc_r, acc_g, acc_b, 0.7 if is_major else 0.35)
+            cr.set_line_width(1.0)
+            cr.move_to(tx, track_y + track_h + 1)
+            cr.line_to(tx, track_y + track_h + 1 + tick_len)
+            cr.stroke()
+
+            if is_major:
+                val_str = f"{int(i * (self.total_gb / 10.0))}G" if self.total_gb > 0 else f"{i*10}%"
+                cr.set_font_size(6.5)
+                vext = cr.text_extents(val_str)
+                cr.move_to(tx - vext.width / 2.0, track_y + track_h + 11)
+                cr.show_text(val_str)
+
+        cr.restore()
+        return False
+
+class ApolloCoresGrid(Gtk.DrawingArea):
+    """Multi-Core Telemetry Bars Grid with generous vertical headroom and clear labels"""
+    def __init__(self, pal, num_cores):
+        super().__init__()
+        self.pal = pal
+        self.num_cores = max(1, num_cores)
+        self.core_pcts = [0.0] * self.num_cores
+        # Generous vertical sizing to completely prevent any occlusion of labels
+        self.set_size_request(340, 80)
+
+    def update_cores(self, core_pcts):
+        self.core_pcts = core_pcts
+        self.num_cores = len(core_pcts) if core_pcts else self.num_cores
+        self.queue_draw()
+
+    def do_draw(self, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.0)
+        cr.rectangle(0, 0, width, height)
+        cr.stroke()
+
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        sub_r, sub_g, sub_b = hex_to_rgb(self.pal["text_sub"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+        yel_r, yel_g, yel_b = hex_to_rgb(self.pal["yellow"])
+        red_r, red_g, red_b = hex_to_rgb(self.pal["red"])
+
+        # Title
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(9.0)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        cr.move_to(8, 14)
+        cr.show_text(f"🚀 MULTI-CORE THREAD BUS ({self.num_cores} CORES)")
+
+        track_x = 8
+        track_y = 22
+        track_w = width - 16
+        track_h = 36  # Generous vertical meter bar height
+
+        n = len(self.core_pcts)
+        if n > 0:
+            col_gap = 5.0
+            col_w = (track_w - (n - 1) * col_gap) / float(n)
+            for i, pct in enumerate(self.core_pcts):
+                cx = track_x + i * (col_w + col_gap)
+
+                # Core slot background
+                tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+                cr.set_source_rgb(tr_r, tr_g, tr_b)
+                cr.rectangle(cx, track_y, col_w, track_h)
+                cr.fill()
+
+                # Border around slot
+                cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+                cr.set_line_width(1.0)
+                cr.rectangle(cx, track_y, col_w, track_h)
+                cr.stroke()
+
+                # Fill from bottom up
+                fill_h = (pct / 100.0) * (track_h - 2)
+                col = (grn_r, grn_g, grn_b) if pct < 70 else ((yel_r, yel_g, yel_b) if pct < 85 else (red_r, red_g, red_b))
+                cr.set_source_rgba(col[0], col[1], col[2], 0.92)
+                cr.rectangle(cx + 1, track_y + track_h - 1 - fill_h, col_w - 2, fill_h)
+                cr.fill()
+
+                # Core label below track (perfectly centered, no occlusion)
+                cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+                cr.set_font_size(8.0)
+                cr.set_source_rgb(sub_r, sub_g, sub_b)
+                lbl = f"C{i}"
+                lext = cr.text_extents(lbl)
+                cr.move_to(cx + (col_w - lext.width)/2.0, track_y + track_h + 13)
+                cr.show_text(lbl)
+
+        cr.restore()
+        return False
+
+# ---------------------------------------------------------
+# Main Dialog Window
+# ---------------------------------------------------------
+class ApolloTelemetryDialog(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Apollo Mission Control Telemetry Console")
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        self.collector = TelemetryCollector()
+        self.refresh_intervals = [1.0, 2.0, 5.0, 0.5]
+        self.cur_interval_idx = 0
+        self.sort_by = "cpu"
+        self.search_filter = ""
+        self.selected_pid = None
+        self.selected_comm = ""
+
+        try:
+            self.set_wmclass("space-telemetry-dialog", "space-telemetry-dialog")
+        except Exception:
+            pass
+        self.set_role("space-telemetry-dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_default_size(820, 660)
+        self.set_resizable(True)
+        self.set_modal(True)
+        self.set_keep_above(True)
+
+        self._setup_css()
+        self._build_ui()
+
+        self.connect("destroy", self._on_destroy)
+        self.connect("key-press-event", self._on_key_press)
+
+        self._update_telemetry()
+        self._timer_id = GLib.timeout_add(int(self.refresh_intervals[self.cur_interval_idx] * 1000), self._on_timer_tick)
+
+    def _setup_css(self):
+        css = f"""
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_panel']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 10px 16px;
+        }}
+        .telemetry-card {{
+            background-color: {self.pal['bg_panel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+        }}
+        .stat-badge {{
+            background-color: {self.pal['bg_bezel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 4px 8px;
+        }}
+        entry {{
+            background-color: {self.pal['bg_bezel']};
+            color: {self.pal['text_main']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 4px 8px;
+            font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+            font-size: 11px;
+        }}
+        entry:focus {{
+            border-color: {self.pal['accent']};
+        }}
+        button,
+        button.action-btn {{
+            background-image: none;
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 5px 10px;
+            color: {self.pal['text_main']};
+            font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        button.action-btn:hover {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        button.danger-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['red']};
+            color: {self.pal['red']};
+        }}
+        button.danger-btn:hover {{
+            background-color: #381114;
+            border-color: {self.pal['red']};
+        }}
+        treeview {{
+            background-color: {self.pal['bg_bezel']};
+            color: {self.pal['text_sub']};
+            font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+            font-size: 11px;
+        }}
+        treeview:selected {{
+            background-color: {self.pal['btn_hover']};
+            color: {self.pal['accent']};
+            border-left: 2px solid {self.pal['accent']};
+        }}
+        treeview header button {{
+            background-color: {self.pal['bg_panel']};
+            color: {self.pal['text_main']};
+            border: 1px solid {self.pal['border_dim']};
+            font-size: 10px;
+            font-weight: bold;
+            padding: 4px 6px;
+        }}
+        scrollbar slider {{
+            background-color: {self.pal['accent']};
+            border-radius: 2px;
+            min-width: 6px;
+        }}
+        scrollbar trough {{
+            background-color: {self.pal['track_bg']};
+            border: 1px solid {self.pal['border_dim']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def _build_ui(self):
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.add(main_vbox)
+
+        # 1. Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        header.get_style_context().add_class("header-box")
+        main_vbox.pack_start(header, False, False, 0)
+
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 13' foreground='{self.pal['text_main']}'>🛰️ APOLLO SYSTEM TELEMETRY &amp; GUIDANCE CONSOLE</span>")
+        title_lbl.set_xalign(0.0)
+
+        sub_lbl = Gtk.Label()
+        sub_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font 9.5' foreground='{self.pal['text_dim']}'>{self.collector.cpu_model} ({self.collector.num_cores} Cores)</span>")
+        sub_lbl.set_xalign(0.0)
+
+        title_box.pack_start(title_lbl, False, False, 0)
+        title_box.pack_start(sub_lbl, False, False, 0)
+        header.pack_start(title_box, True, True, 0)
+
+        annun_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        
+        self.status_badge = Gtk.Label()
+        self.status_badge.get_style_context().add_class("stat-badge")
+        self.status_badge.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 10' foreground='{self.pal['green']}'>[SYS: NOMINAL]</span>")
+        annun_box.pack_start(self.status_badge, False, False, 0)
+
+        self.interval_btn = Gtk.Button(label=f"⏱️ {self.refresh_intervals[self.cur_interval_idx]}s")
+        self.interval_btn.get_style_context().add_class("action-btn")
+        self.interval_btn.connect("clicked", self._cycle_interval)
+        annun_box.pack_start(self.interval_btn, False, False, 0)
+
+        header.pack_end(annun_box, False, False, 0)
+
+        # 2. Telemetry Grid
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content_box.set_margin_start(12)
+        content_box.set_margin_end(12)
+        main_vbox.pack_start(content_box, True, True, 0)
+
+        gauges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        content_box.pack_start(gauges_box, False, False, 0)
+
+        # Left Gauges
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        left_box.get_style_context().add_class("telemetry-card")
+        self.cpu_meter = ApolloCpuMeter(self.pal)
+        self.cores_grid = ApolloCoresGrid(self.pal, self.collector.num_cores)
+        left_box.pack_start(self.cpu_meter, False, False, 0)
+        left_box.pack_start(self.cores_grid, False, False, 0)
+        gauges_box.pack_start(left_box, True, True, 0)
+
+        # Right Gauges
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        right_box.get_style_context().add_class("telemetry-card")
+        self.mem_meter = ApolloMemoryMeter(self.pal)
+        right_box.pack_start(self.mem_meter, False, False, 0)
+
+        self.disk_info_lbl = Gtk.Label()
+        self.disk_info_lbl.set_xalign(0.0)
+        self.disk_info_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font 9' foreground='{self.pal['text_sub']}'>STORAGE: Initializing telemetry recorder...</span>")
+        right_box.pack_start(self.disk_info_lbl, True, True, 0)
+        gauges_box.pack_start(right_box, True, True, 0)
+
+        # 3. Process Table Card
+        proc_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        proc_card.get_style_context().add_class("telemetry-card")
+        content_box.pack_start(proc_card, True, True, 0)
+
+        p_ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        p_title = Gtk.Label()
+        p_title.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 10' foreground='{self.pal['text_main']}'>📋 ACTIVE FLIGHT TASKS &amp; PROCESSES</span>")
+        p_ctrl_box.pack_start(p_title, False, False, 0)
+
+        self.search_entry = Gtk.Entry()
+        self.search_entry.set_placeholder_text("Filter tasks (F / /)...")
+        self.search_entry.connect("changed", self._on_search_changed)
+        p_ctrl_box.pack_start(self.search_entry, True, True, 0)
+
+        self.sort_cpu_btn = Gtk.Button(label="▶ SORT: CPU%")
+        self.sort_cpu_btn.get_style_context().add_class("action-btn")
+        self.sort_cpu_btn.connect("clicked", lambda b: self._set_sort("cpu"))
+        p_ctrl_box.pack_start(self.sort_cpu_btn, False, False, 0)
+
+        self.sort_mem_btn = Gtk.Button(label="SORT: MEM%")
+        self.sort_mem_btn.get_style_context().add_class("action-btn")
+        self.sort_mem_btn.connect("clicked", lambda b: self._set_sort("mem"))
+        p_ctrl_box.pack_start(self.sort_mem_btn, False, False, 0)
+
+        proc_card.pack_start(p_ctrl_box, False, False, 0)
+
+        self.proc_store = Gtk.ListStore(int, str, str, str, str, str)
+        self.tree_view = Gtk.TreeView(model=self.proc_store)
+        self.tree_view.set_headers_visible(True)
+
+        cols = [
+            ("PID", 0, 70),
+            ("USER", 1, 80),
+            ("CPU%", 2, 70),
+            ("MEM%", 3, 70),
+            ("STAT", 4, 60),
+            ("COMMAND / PROCESS", 5, 260)
+        ]
+        for title, idx, min_w in cols:
+            renderer = Gtk.CellRendererText()
+            renderer.set_property("font", "JetBrainsMono Nerd Font 10")
+            if idx in (0, 2, 3, 4):
+                renderer.set_property("xalign", 1.0 if idx in (0, 2, 3) else 0.5)
+            col = Gtk.TreeViewColumn(title, renderer, text=idx)
+            col.set_min_width(min_w)
+            col.set_resizable(True)
+            self.tree_view.append_column(col)
+
+        self.tree_view.get_selection().connect("changed", self._on_proc_selected)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.add(self.tree_view)
+        proc_card.pack_start(scroller, True, True, 0)
+
+        p_act_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.sel_proc_lbl = Gtk.Label()
+        self.sel_proc_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font 9.5' foreground='{self.pal['text_dim']}'>Select a process to dispatch task abort commands.</span>")
+        p_act_box.pack_start(self.sel_proc_lbl, True, True, 0)
+
+        self.kill_term_btn = Gtk.Button(label="⚠️ TERMINATE (SIGTERM)")
+        self.kill_term_btn.get_style_context().add_class("action-btn")
+        self.kill_term_btn.set_sensitive(False)
+        self.kill_term_btn.connect("clicked", lambda b: self._kill_selected(signal.SIGTERM))
+        p_act_box.pack_start(self.kill_term_btn, False, False, 0)
+
+        self.kill_force_btn = Gtk.Button(label="⚡ FORCE ABORT (SIGKILL)")
+        self.kill_force_btn.get_style_context().add_class("danger-btn")
+        self.kill_force_btn.set_sensitive(False)
+        self.kill_force_btn.connect("clicked", lambda b: self._kill_selected(signal.SIGKILL))
+        p_act_box.pack_start(self.kill_force_btn, False, False, 0)
+
+        proc_card.pack_start(p_act_box, False, False, 0)
+
+        # 4. Bottom Dispatch Bar
+        bottom_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bottom_bar.set_margin_start(12)
+        bottom_bar.set_margin_end(12)
+        bottom_bar.set_margin_bottom(10)
+        main_vbox.pack_start(bottom_bar, False, False, 0)
+
+        trim_btn = Gtk.Button(label="🧹 TRIM CACHES (T)")
+        trim_btn.get_style_context().add_class("action-btn")
+        trim_btn.connect("clicked", self._trim_caches)
+        bottom_bar.pack_start(trim_btn, False, False, 0)
+
+        htop_btn = Gtk.Button(label="📟 HTOP CONSOLE (H)")
+        htop_btn.get_style_context().add_class("action-btn")
+        htop_btn.connect("clicked", self._launch_htop)
+        bottom_bar.pack_start(htop_btn, False, False, 0)
+
+        ref_btn = Gtk.Button(label="⚡ REFRESH (R)")
+        ref_btn.get_style_context().add_class("action-btn")
+        ref_btn.connect("clicked", lambda b: self._update_telemetry())
+        bottom_bar.pack_start(ref_btn, False, False, 0)
+
+        close_btn = Gtk.Button(label="✕ CLOSE (ESC)")
+        close_btn.get_style_context().add_class("action-btn")
+        close_btn.connect("clicked", lambda b: self.destroy())
+        bottom_bar.pack_end(close_btn, False, False, 0)
+
+    def _cycle_interval(self, btn):
+        self.cur_interval_idx = (self.cur_interval_idx + 1) % len(self.refresh_intervals)
+        sec = self.refresh_intervals[self.cur_interval_idx]
+        self.interval_btn.set_label(f"⏱️ {sec}s")
+        if hasattr(self, '_timer_id') and self._timer_id:
+            GLib.source_remove(self._timer_id)
+        self._timer_id = GLib.timeout_add(int(sec * 1000), self._on_timer_tick)
+
+    def _set_sort(self, sort_type):
+        self.sort_by = sort_type
+        self.sort_cpu_btn.set_label("▶ SORT: CPU%" if sort_type == "cpu" else "SORT: CPU%")
+        self.sort_mem_btn.set_label("▶ SORT: MEM%" if sort_type == "mem" else "SORT: MEM%")
+        self._update_processes()
+
+    def _on_search_changed(self, entry):
+        self.search_filter = entry.get_text().strip().lower()
+        self._update_processes()
+
+    def _on_proc_selected(self, selection):
+        model, tree_iter = selection.get_selected()
+        if tree_iter:
+            pid = model.get_value(tree_iter, 0)
+            comm = model.get_value(tree_iter, 5)
+            self.selected_pid = pid
+            self.selected_comm = comm
+            self.sel_proc_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9.5' foreground='{self.pal['text_main']}'>SELECTED: PID {pid} [{comm}]</span>")
+            self.kill_term_btn.set_sensitive(True)
+            self.kill_force_btn.set_sensitive(True)
+        else:
+            self.selected_pid = None
+            self.selected_comm = ""
+            self.sel_proc_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font 9.5' foreground='{self.pal['text_dim']}'>Select a process to dispatch task abort commands.</span>")
+            self.kill_term_btn.set_sensitive(False)
+            self.kill_force_btn.set_sensitive(False)
+
+    def _kill_selected(self, sig):
+        if not self.selected_pid:
+            return
+        pid = self.selected_pid
+        comm = self.selected_comm
+        signame = "SIGTERM" if sig == signal.SIGTERM else "SIGKILL"
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"APOLLO FLIGHT ABORT: {signame}"
+        )
+        dialog.format_secondary_text(f"Confirm sending {signame} to process PID {pid} ({comm})?")
+        res = dialog.run()
+        dialog.destroy()
+
+        if res == Gtk.ResponseType.OK:
+            try:
+                os.kill(pid, sig)
+                self.sel_proc_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9.5' foreground='{self.pal['green']}'>ABORT DISPATCHED: PID {pid} ({signame})</span>")
+                GLib.timeout_add(300, self._update_telemetry)
+            except Exception as e:
+                self.sel_proc_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9.5' foreground='{self.pal['red']}'>ERROR: {e}</span>")
+
+    def _trim_caches(self, btn):
+        def _run_trim():
+            try:
+                subprocess.run(["sync"], check=True)
+            except Exception:
+                pass
+            GLib.idle_add(self._update_telemetry)
+        threading.Thread(target=_run_trim, daemon=True).start()
+        self.sel_proc_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9.5' foreground='{self.pal['green']}'>FLUSH: Filesystem sync dispatched.</span>")
+
+    def _launch_htop(self, btn=None):
+        try:
+            subprocess.Popen(["kitty", "--class", "htop", "-e", "htop"])
+        except Exception:
+            try:
+                subprocess.Popen(["x-terminal-emulator", "-e", "htop"])
+            except Exception:
+                pass
+
+    def _on_timer_tick(self):
+        self._update_telemetry()
+        return True
+
+    def _update_telemetry(self):
+        # 1. CPU & Cores
+        cpu_data = self.collector.read_cpu_and_cores()
+        self.cpu_meter.update_values(cpu_data["overall"], cpu_data["temp_c"], cpu_data["freq_mhz"])
+        self.cores_grid.update_cores(cpu_data["cores"])
+
+        if cpu_data["overall"] > 85 or cpu_data["temp_c"] > 85:
+            self.status_badge.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 10' foreground='{self.pal['red']}'>[SYS: CRITICAL]</span>")
+        elif cpu_data["overall"] > 70 or cpu_data["temp_c"] > 70:
+            self.status_badge.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 10' foreground='{self.pal['yellow']}'>[SYS: ELEVATED]</span>")
+        else:
+            self.status_badge.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 10' foreground='{self.pal['green']}'>[SYS: NOMINAL]</span>")
+
+        # 2. Memory
+        mem_data = self.collector.read_memory()
+        self.mem_meter.update_values(mem_data["used_gb"], mem_data["cache_gb"], mem_data["total_gb"], mem_data["used_pct"])
+
+        # 3. Storage & System Status Info
+        disks = self.collector.read_storage()
+        disk_str = " | ".join([f"{d['mount']}: {d['used_gb']:.1f}G/{d['total_gb']:.1f}G ({d['pct']:.0f}%)" for d in disks])
+        load1, load5, load15 = cpu_data["load_avg"]
+        info_markup = (
+            f"<span font_desc='JetBrainsMono Nerd Font 9' foreground='{self.pal['text_sub']}'>"
+            f"<b>LOAD AVG:</b> {load1:.2f}, {load5:.2f}, {load15:.2f} | <b>SWAP:</b> {mem_data['swap_used_gb']:.1f}G/{mem_data['swap_total_gb']:.1f}G\n"
+            f"<b>VOLUMES:</b> {disk_str}</span>"
+        )
+        self.disk_info_lbl.set_markup(info_markup)
+
+        # 4. Processes
+        self._update_processes()
+
+    def _update_processes(self):
+        procs = self.collector.read_top_processes(limit=40, sort_by=self.sort_by)
+        filtered = []
+        for p in procs:
+            if self.search_filter:
+                match_str = f"{p['pid']} {p['user']} {p['comm']} {p['cmd']}".lower()
+                if self.search_filter not in match_str:
+                    continue
+            filtered.append(p)
+
+        cur_sel = self.selected_pid
+
+        self.proc_store.clear()
+        selected_iter = None
+        for p in filtered:
+            it = self.proc_store.append([
+                p["pid"],
+                p["user"][:8],
+                f"{p['cpu']:4.1f}%",
+                f"{p['mem']:4.1f}%",
+                p["stat"][:3],
+                p["comm"]
+            ])
+            if cur_sel and p["pid"] == cur_sel:
+                selected_iter = it
+
+        if selected_iter:
+            self.tree_view.get_selection().select_iter(selected_iter)
+
+    def _on_key_press(self, widget, event):
+        key = Gdk.keyval_name(event.keyval)
+        if key in ("Escape", "q", "Q") and not self.search_entry.is_focus():
+            self.destroy()
+            return True
+        elif key in ("h", "H") and not self.search_entry.is_focus():
+            self._launch_htop()
+            return True
+        elif key in ("t", "T") and not self.search_entry.is_focus():
+            self._trim_caches(None)
+            return True
+        elif key in ("r", "R") and not self.search_entry.is_focus():
+            self._update_telemetry()
+            return True
+        elif key in ("f", "F", "slash") and not self.search_entry.is_focus():
+            self.search_entry.grab_focus()
+            return True
+        return False
+
+    def _on_destroy(self, widget):
+        if hasattr(self, '_timer_id') and self._timer_id:
+            GLib.source_remove(self._timer_id)
+        cleanup()
+
+def main():
+    check_singleton()
+    signal.signal(signal.SIGINT, lambda s, f: Gtk.main_quit())
+    signal.signal(signal.SIGTERM, lambda s, f: Gtk.main_quit())
+
+    win = ApolloTelemetryDialog()
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,1040 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Default Applications & Subsystem Handlers Manager
+Allows viewing and configuring default handlers for Web, Terminal, File Manager,
+Editor, Audio, Video, Images, Documents, and Email.
+Follows zero-white-background space mission palettes and dynamic theme switching.
+"""
+import sys, os, subprocess, configparser, re, signal, glob
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+
+try:
+    from gi.repository import GLibUnix
+    HAVE_GLIB_UNIX = True
+except Exception:
+    HAVE_GLIB_UNIX = False
+
+PID_FILE = f"/tmp/space-default-apps-{os.getuid()}.pid"
+MIMEAPPS_FILE = os.path.expanduser("~/.config/mimeapps.list")
+HYPRLAND_LUA = os.path.expanduser("~/.config/hypr/hyprland.lua")
+HYPRLAND_CONF = os.path.expanduser("~/.config/hypr/hyprland.conf")
+
+THEMES = {
+    "nasa": {
+        "bg_chassis": "#0a0d12",
+        "bg_panel": "#12161f",
+        "bg_card": "#161c27",
+        "bg_input": "#06080b",
+        "bg_selected": "#241e0c",
+        "accent": "#ffb000",
+        "accent_dim": "#8c6200",
+        "text_primary": "#ffb000",
+        "text_secondary": "#e2e8f0",
+        "text_dim": "#705a28",
+        "btn_bg": "#12161f",
+        "btn_border": "#283444",
+        "btn_hover": "#1e2636",
+        "comp_acty": "#2ef788",
+        "green": "#2ef788",
+        "border_color": "#ffb000",
+        "border_dim": "#263040",
+        "radius": "3px",
+        "shadow": "0 0 16px rgba(0, 0, 0, 0.95)",
+    },
+    "crt-amber": {
+        "bg_chassis": "#060709",
+        "bg_panel": "#0e1014",
+        "bg_card": "#14171d",
+        "bg_input": "#030405",
+        "bg_selected": "#261908",
+        "accent": "#ff9e00",
+        "accent_dim": "#7a4c00",
+        "text_primary": "#ff9e00",
+        "text_secondary": "#e68e00",
+        "text_dim": "#734900",
+        "btn_bg": "#0e1014",
+        "btn_border": "#402800",
+        "btn_hover": "#221500",
+        "comp_acty": "#ff9e00",
+        "green": "#ff9e00",
+        "border_color": "#ff9e00",
+        "border_dim": "#402800",
+        "radius": "0px",
+        "shadow": "0 0 16px rgba(255, 158, 0, 0.35)",
+    },
+    "crt-green": {
+        "bg_chassis": "#040704",
+        "bg_panel": "#0a100a",
+        "bg_card": "#0e1a0e",
+        "bg_input": "#020502",
+        "bg_selected": "#102610",
+        "accent": "#33ff33",
+        "accent_dim": "#156615",
+        "text_primary": "#33ff33",
+        "text_secondary": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#0a100a",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#0c240c",
+        "comp_acty": "#33ff33",
+        "green": "#33ff33",
+        "border_color": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "radius": "0px",
+        "shadow": "0 0 16px rgba(51, 255, 51, 0.35)",
+    },
+    "kosmos-vfd": {
+        "bg_chassis": "#07100e",
+        "bg_panel": "#0e1e1a",
+        "bg_card": "#142823",
+        "bg_input": "#040b09",
+        "bg_selected": "#173830",
+        "accent": "#48e5c2",
+        "accent_dim": "#1f6656",
+        "text_primary": "#48e5c2",
+        "text_secondary": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#0e1e1a",
+        "btn_border": "#1a4037",
+        "btn_hover": "#123028",
+        "comp_acty": "#48e5c2",
+        "green": "#48e5c2",
+        "border_color": "#48e5c2",
+        "border_dim": "#183d34",
+        "radius": "2px",
+        "shadow": "0 0 16px rgba(72, 229, 194, 0.35)",
+    }
+}
+
+ROLES = [
+    {
+        "id": "browser",
+        "code": "01",
+        "title": "WEB BROWSER",
+        "desc": "Default handler for HTTP, HTTPS, and HTML web resources",
+        "mimes": ["x-scheme-handler/http", "x-scheme-handler/https", "text/html", "application/xhtml+xml"],
+    },
+    {
+        "id": "terminal",
+        "code": "02",
+        "title": "TERMINAL EMULATOR",
+        "desc": "Primary system command console & Hyprland shortcut [SUPER+T]",
+        "is_hyprland_var": "terminal",
+        "mimes": ["x-scheme-handler/terminal"],
+    },
+    {
+        "id": "filemanager",
+        "code": "03",
+        "title": "FILE MANAGER",
+        "desc": "Directory navigator, storage browser & Hyprland shortcut [SUPER+E]",
+        "is_hyprland_var": "fileManager",
+        "mimes": ["inode/directory"],
+    },
+    {
+        "id": "editor",
+        "code": "04",
+        "title": "CODE / TEXT EDITOR",
+        "desc": "Source code and plain text document editor",
+        "mimes": ["text/plain", "text/markdown", "text/x-python", "text/x-c", "application/json", "application/x-yaml"],
+    },
+    {
+        "id": "audio",
+        "code": "05",
+        "title": "AUDIO / MUSIC PLAYER",
+        "desc": "Music playback, audio streams, and local sound files",
+        "mimes": ["audio/mpeg", "audio/flac", "audio/x-wav", "audio/ogg", "audio/aac", "audio/mp4", "x-scheme-handler/spotify"],
+    },
+    {
+        "id": "video",
+        "code": "06",
+        "title": "VIDEO PLAYER",
+        "desc": "Video containers, media files, and capture streams",
+        "mimes": ["video/mp4", "video/mkv", "video/x-matroska", "video/webm", "video/avi", "video/quicktime"],
+    },
+    {
+        "id": "pdf",
+        "code": "07",
+        "title": "PDF / DOC VIEWER",
+        "desc": "Portable document format and office documents viewer",
+        "mimes": ["application/pdf", "application/vnd.oasis.opendocument.text"],
+    },
+    {
+        "id": "image",
+        "code": "08",
+        "title": "IMAGE VIEWER",
+        "desc": "Raster and vector graphic imagery viewer",
+        "mimes": ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"],
+    },
+    {
+        "id": "email",
+        "code": "09",
+        "title": "EMAIL CLIENT",
+        "desc": "Electronic mail and communication protocols",
+        "mimes": ["x-scheme-handler/mailto", "message/rfc822"],
+    }
+]
+
+ROLE_FILTERS = {
+    "browser": {
+        "mimes": ["x-scheme-handler/http", "x-scheme-handler/https", "text/html"],
+        "cats": ["webbrowser"],
+        "regex": r"\b(firefox|chromium|chrome|brave|zen|vivaldi|opera|tor-browser|edge|epiphany)\b",
+        "exclude": r"\b(avahi|ssh|vnc|discover)\b"
+    },
+    "terminal": {
+        "mimes": ["x-scheme-handler/terminal"],
+        "cats": ["terminalemulator"],
+        "regex": r"\b(kitty|ghostty|alacritty|foot|wezterm|konsole|gnome-terminal|xterm|urxvt|terminator|tilix)\b",
+        "exclude": None
+    },
+    "filemanager": {
+        "mimes": ["inode/directory"],
+        "cats": ["filemanager"],
+        "regex": r"\b(dolphin|thunar|nautilus|nemo|pcmanfm|caja|ranger|yazi)\b",
+        "exclude": None
+    },
+    "editor": {
+        "mimes": ["text/plain", "text/markdown", "text/x-python", "text/x-c"],
+        "cats": ["texteditor", "ide"],
+        "regex": r"\b(code-oss|code|vscodium|sublime|vim|nvim|neovim|kate|gedit|nano|emacs|obsidian)\b",
+        "exclude": r"\b(pavucontrol|spotify|vlc|capcom|video|audio|libreoffice)\b"
+    },
+    "audio": {
+        "mimes": ["audio/mpeg", "audio/flac", "audio/x-wav", "audio/ogg", "x-scheme-handler/spotify"],
+        "cats": ["audio", "music"],
+        "regex": r"\b(spotify|rhythmbox|audacious|cider|mixxx|clementine|strawberry|deadbeef)\b",
+        "exclude": r"\b(pavucontrol|settings|volume|capcom|firefox)\b"
+    },
+    "video": {
+        "mimes": ["video/mp4", "video/mkv", "video/x-matroska", "video/webm"],
+        "cats": ["video"],
+        "regex": r"\b(vlc|mpv|totem|celluloid|smplayer|haruna|kodi)\b",
+        "exclude": r"\b(pavucontrol|settings|volume|capcom|firefox)\b"
+    },
+    "pdf": {
+        "mimes": ["application/pdf"],
+        "cats": ["office", "wordprocessor"],
+        "regex": r"\b(okular|evince|zathura|libreoffice|pdf|mupdf|qpdfview)\b",
+        "exclude": r"\b(pavucontrol|calc|math|htop)\b"
+    },
+    "image": {
+        "mimes": ["image/png", "image/jpeg", "image/gif", "image/webp"],
+        "cats": ["graphics", "rastergraphics", "2dgraphics", "photography"],
+        "regex": r"\b(gwenview|eog|feh|imv|gimp|viewnior|nomacs|loupe|ristretto|simple-scan)\b",
+        "exclude": r"\b(pavucontrol|calc|math|htop|editor|firefox)\b"
+    },
+    "email": {
+        "mimes": ["x-scheme-handler/mailto"],
+        "cats": ["email"],
+        "regex": r"\b(thunderbird|betterbird|geary|evolution|kmail|mailspring|neomutt|mutt)\b",
+        "exclude": None
+    }
+}
+
+def get_current_theme():
+    theme_file = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.isfile(theme_file):
+        try:
+            with open(theme_file, "r") as f:
+                theme = f.read().strip()
+                if theme in THEMES:
+                    return theme
+        except Exception:
+            pass
+    return "nasa"
+
+def scan_all_desktop_apps():
+    search_dirs = [
+        "/usr/share/applications",
+        os.path.expanduser("~/.local/share/applications"),
+        "/var/lib/flatpak/exports/share/applications",
+        os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+    ]
+    apps = {}
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for root, _, files in os.walk(d):
+            for file in files:
+                if not file.endswith(".desktop"):
+                    continue
+                path = os.path.join(root, file)
+                cp = configparser.RawConfigParser(strict=False)
+                try:
+                    cp.read(path, encoding="utf-8")
+                    if not cp.has_section("Desktop Entry"):
+                        continue
+                    if cp.getboolean("Desktop Entry", "NoDisplay", fallback=False):
+                        continue
+                    if cp.getboolean("Desktop Entry", "Hidden", fallback=False):
+                        continue
+                    name = cp.get("Desktop Entry", "Name", fallback=None)
+                    exec_cmd = cp.get("Desktop Entry", "Exec", fallback=None)
+                    if not name or not exec_cmd:
+                        continue
+                    
+                    clean_exec = re.sub(r"%[a-zA-Z]", "", exec_cmd).strip()
+                    cats = [c.strip() for c in cp.get("Desktop Entry", "Categories", fallback="").split(";") if c.strip()]
+                    mimes = [m.strip() for m in cp.get("Desktop Entry", "MimeType", fallback="").split(";") if m.strip()]
+                    generic = cp.get("Desktop Entry", "GenericName", fallback="")
+                    comment = cp.get("Desktop Entry", "Comment", fallback="")
+                    
+                    bname = file
+                    apps[bname] = {
+                        "desktop_id": bname,
+                        "name": name,
+                        "exec": clean_exec,
+                        "raw_exec": exec_cmd,
+                        "generic": generic,
+                        "comment": comment,
+                        "categories": cats,
+                        "mimes": mimes,
+                        "path": path,
+                    }
+                except Exception:
+                    continue
+    return apps
+
+def read_mimeapps():
+    defaults = {}
+    if os.path.isfile(MIMEAPPS_FILE):
+        cp = configparser.RawConfigParser(strict=False)
+        try:
+            cp.read(MIMEAPPS_FILE, encoding="utf-8")
+            if cp.has_section("Default Applications"):
+                for k, v in cp.items("Default Applications"):
+                    defaults[k.strip().lower()] = v.split(";")[0].strip()
+        except Exception:
+            pass
+    return defaults
+
+def read_hyprland_vars():
+    vars_dict = {"terminal": "kitty", "fileManager": "dolphin"}
+    if os.path.isfile(HYPRLAND_LUA):
+        try:
+            with open(HYPRLAND_LUA, "r", encoding="utf-8") as f:
+                content = f.read()
+            m_term = re.search(r'local\s+terminal\s*=\s*"([^"]+)"', content)
+            if m_term:
+                vars_dict["terminal"] = m_term.group(1).strip()
+            m_fm = re.search(r'local\s+fileManager\s*=\s*"([^"]+)"', content)
+            if m_fm:
+                vars_dict["fileManager"] = m_fm.group(1).strip()
+        except Exception:
+            pass
+    elif os.path.isfile(HYPRLAND_CONF):
+        try:
+            with open(HYPRLAND_CONF, "r", encoding="utf-8") as f:
+                content = f.read()
+            m_term = re.search(r'\$terminal\s*=\s*([^\n#]+)', content)
+            if m_term:
+                vars_dict["terminal"] = m_term.group(1).strip()
+            m_fm = re.search(r'\$fileManager\s*=\s*([^\n#]+)', content)
+            if m_fm:
+                vars_dict["fileManager"] = m_fm.group(1).strip()
+        except Exception:
+            pass
+    return vars_dict
+
+def set_hyprland_var(var_name, new_val):
+    # Update Lua config if present
+    if os.path.isfile(HYPRLAND_LUA):
+        try:
+            with open(HYPRLAND_LUA, "r", encoding="utf-8") as f:
+                content = f.read()
+            pattern = rf'(local\s+{var_name}\s*=\s*)"[^"]+"'
+            new_content = re.sub(pattern, rf'\1"{new_val}"', content)
+            with open(HYPRLAND_LUA, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as e:
+            print(f"Error updating Hyprland Lua variable {var_name}: {e}", file=sys.stderr)
+
+    # Update Conf config if present
+    if os.path.isfile(HYPRLAND_CONF):
+        try:
+            with open(HYPRLAND_CONF, "r", encoding="utf-8") as f:
+                content = f.read()
+            pattern = rf'(\${var_name}\s*=\s*)[^\n#]+'
+            new_content = re.sub(pattern, rf'\1{new_val}', content)
+            with open(HYPRLAND_CONF, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as e:
+            print(f"Error updating Hyprland Conf variable {var_name}: {e}", file=sys.stderr)
+
+def set_mime_defaults(desktop_id, mime_list):
+    os.makedirs(os.path.dirname(MIMEAPPS_FILE), exist_ok=True)
+    cp = configparser.RawConfigParser(strict=False)
+    if os.path.isfile(MIMEAPPS_FILE):
+        try:
+            cp.read(MIMEAPPS_FILE, encoding="utf-8")
+        except Exception:
+            pass
+    
+    if not cp.has_section("Default Applications"):
+        cp.add_section("Default Applications")
+    if not cp.has_section("Added Associations"):
+        cp.add_section("Added Associations")
+        
+    for m in mime_list:
+        cp.set("Default Applications", m, desktop_id)
+        # Also run xdg-mime in background
+        try:
+            subprocess.Popen(["xdg-mime", "default", desktop_id, m], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+            
+    with open(MIMEAPPS_FILE, "w", encoding="utf-8") as f:
+        cp.write(f)
+
+class DefaultAppsManager(Gtk.Window):
+    def __init__(self):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.theme_name = get_current_theme()
+        self.t = THEMES[self.theme_name]
+        self.all_apps = scan_all_desktop_apps()
+        self.current_role_idx = 0
+        self.css_provider = None
+        self.comp_acty_state = True
+        
+        self.set_title("Apollo Default Applications Manager")
+        self.set_default_size(760, 560)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+        
+        if HAVE_GLIB_UNIX:
+            GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.on_sigusr1)
+        else:
+            try:
+                GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.on_sigusr1)
+            except Exception:
+                pass
+        
+        GLib.timeout_add(500, self.on_blink_comp_acty)
+        self.load_role_view(0)
+
+    def on_blink_comp_acty(self):
+        self.comp_acty_state = not self.comp_acty_state
+        if hasattr(self, 'comp_box') and self.comp_box:
+            if self.comp_acty_state:
+                self.comp_box.get_style_context().add_class("active")
+            else:
+                self.comp_box.get_style_context().remove_class("active")
+        return True
+
+    def on_sigusr1(self):
+        self.theme_name = get_current_theme()
+        self.t = THEMES[self.theme_name]
+        self.apply_css()
+        self.load_role_view(self.current_role_idx)
+        return True
+
+    def apply_css(self):
+        t = self.t
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', 'IBM Plex Mono', monospace;
+            background-image: none;
+            outline: none;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        window,
+        #main-window,
+        #chassis-frame {{
+            background-color: {t['bg_chassis']};
+            color: {t['text_primary']};
+        }}
+        #chassis-frame {{
+            border: 2px solid {t['border_color']};
+            border-radius: {t['radius']};
+            padding: 14px;
+            box-shadow: {t['shadow']};
+        }}
+        .top-panel {{
+            background-color: {t['bg_panel']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 8px 12px;
+            margin-bottom: 10px;
+        }}
+        .title-header {{
+            font-size: 13px;
+            font-weight: 900;
+            color: {t['accent']};
+            letter-spacing: 1.5px;
+        }}
+        .sub-header {{
+            font-size: 9.5px;
+            font-weight: 700;
+            color: {t['text_secondary']};
+        }}
+        .comp-tile {{
+            font-size: 9.5px;
+            font-weight: 900;
+            padding: 3px 6px;
+            border-radius: 2px;
+            border: 1px solid {t['border_dim']};
+            background-color: {t['bg_input']};
+            color: {t['text_dim']};
+            min-width: 76px;
+            transition: background-color 0.08s ease, color 0.08s ease;
+        }}
+        .comp-tile.active {{
+            background-color: {t['comp_acty']};
+            border: 1px solid {t['comp_acty']};
+            color: #000000;
+        }}
+        .comp-tile.active label {{
+            color: #000000;
+        }}
+        .digital-box {{
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 2px 6px;
+            min-width: 60px;
+        }}
+        .digital-lbl {{
+            font-size: 8px;
+            font-weight: 800;
+            color: {t['text_dim']};
+        }}
+        .digital-val {{
+            font-size: 14px;
+            font-weight: 900;
+            color: {t['accent']};
+            letter-spacing: 1px;
+        }}
+        .role-btn {{
+            font-size: 10.5px;
+            font-weight: 800;
+            padding: 7px 10px;
+            margin: 2px 0px;
+            border-radius: 2px;
+            border: 1px solid {t['border_dim']};
+            background-color: {t['bg_panel']};
+            color: {t['text_secondary']};
+        }}
+        .role-btn:hover {{
+            border-color: {t['accent']};
+            color: {t['accent']};
+            background-color: {t['btn_hover']};
+        }}
+        .role-btn.active {{
+            background-color: {t['bg_selected']};
+            color: {t['accent']};
+            border: 1px solid {t['accent']};
+            border-left: 4px solid {t['accent']};
+            font-weight: 900;
+        }}
+        .role-btn.active label {{
+            color: {t['accent']};
+        }}
+        .card-panel {{
+            background-color: {t['bg_card']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 12px;
+        }}
+        .current-badge {{
+            font-size: 9px;
+            font-weight: 900;
+            padding: 2px 6px;
+            border-radius: 2px;
+            background-color: {t['bg_input']};
+            border: 1px solid {t['green']};
+            color: {t['green']};
+        }}
+        .unconfigured-badge {{
+            font-size: 9px;
+            font-weight: 900;
+            padding: 2px 6px;
+            border-radius: 2px;
+            background-color: {t['bg_input']};
+            border: 1px solid {t['accent_dim']};
+            color: {t['accent']};
+        }}
+        .empty-state-box {{
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_dim']};
+            border-left: 3px solid {t['accent']};
+            border-radius: {t['radius']};
+            padding: 16px 14px;
+            margin: 8px 0px;
+        }}
+        .empty-warn-lbl {{
+            font-size: 11px;
+            font-weight: 900;
+            color: {t['accent']};
+            margin-bottom: 4px;
+        }}
+        .empty-desc-lbl {{
+            font-size: 9.5px;
+            color: {t['text_secondary']};
+        }}
+        scrolledwindow,
+        scrolledwindow viewport,
+        viewport,
+        list,
+        listbox,
+        listview,
+        treeview,
+        #cand-scroll,
+        #cand-listbox,
+        .cand-listbox {{
+            background-color: transparent;
+            background: transparent;
+            border: none;
+            outline: none;
+            box-shadow: none;
+        }}
+        row,
+        list row,
+        listboxrow,
+        .list-row {{
+            background-color: transparent;
+            background: transparent;
+            border: none;
+            outline: none;
+            box-shadow: none;
+        }}
+        row:hover,
+        list row:hover,
+        listboxrow:hover,
+        row:selected,
+        list row:selected,
+        listboxrow:selected {{
+            background-color: transparent;
+            background: transparent;
+        }}
+        .app-item-box {{
+            padding: 8px 10px;
+            margin: 2px 0px;
+            border-radius: {t['radius']};
+            background-color: {t['bg_panel']};
+            border: 1px solid {t['border_dim']};
+        }}
+        .app-item-box.selected {{
+            border-color: {t['accent']};
+            background-color: {t['bg_selected']};
+        }}
+        .app-name-lbl {{
+            font-size: 11.5px;
+            font-weight: 800;
+            color: {t['text_primary']};
+        }}
+        .app-cmd-lbl {{
+            font-size: 9px;
+            color: {t['text_dim']};
+        }}
+        .action-btn {{
+            font-size: 10px;
+            font-weight: 800;
+            padding: 5px 12px;
+            border-radius: 2px;
+            border: 1px solid {t['border_dim']};
+            background-color: {t['btn_bg']};
+            color: {t['text_secondary']};
+        }}
+        .action-btn:hover {{
+            border-color: {t['accent']};
+            color: {t['accent']};
+            background-color: {t['btn_hover']};
+        }}
+        .action-btn.primary {{
+            border-color: {t['accent']};
+            background-color: {t['accent']};
+            color: {t['bg_chassis']};
+            font-weight: 900;
+        }}
+        .action-btn.primary:hover {{
+            background-color: {t['text_primary']};
+        }}
+        .status-banner {{
+            font-size: 9.5px;
+            font-weight: 800;
+            padding: 4px 8px;
+            border-radius: 2px;
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_dim']};
+            color: {t['accent']};
+        }}
+        .footer-lbl {{
+            font-size: 9px;
+            color: {t['text_dim']};
+        }}
+        scrollbar, scrollbar trough {{
+            background-color: {t['bg_panel']};
+            border: none;
+        }}
+        scrollbar slider {{
+            background-color: {t['border_dim']};
+            border-radius: 2px;
+            min-width: 4px;
+        }}
+        scrollbar slider:hover {{
+            background-color: {t['accent_dim']};
+        }}
+        """
+        if not self.css_provider:
+            self.css_provider = Gtk.CssProvider()
+            Gtk.StyleContext.add_provider_for_screen(
+                Gdk.Screen.get_default(),
+                self.css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        self.css_provider.load_from_data(css.encode('utf-8'))
+
+    def build_ui(self):
+        self.set_name("main-window")
+        
+        chassis = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chassis.set_name("chassis-frame")
+        self.add(chassis)
+        
+        # --- 1. TOP HEADER & TELEMETRY REGISTERS ---
+        top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        top_box.get_style_context().add_class("top-panel")
+        chassis.pack_start(top_box, False, False, 0)
+        
+        # Left header text
+        v_title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        lbl_head = Gtk.Label(label="APOLLO SUBSYSTEM // DEFAULT HANDLERS", xalign=0)
+        lbl_head.get_style_context().add_class("title-header")
+        lbl_sub = Gtk.Label(label="SYSTEM PROTOCOL & APPLICATION DISPATCH CONFIGURATION", xalign=0)
+        lbl_sub.get_style_context().add_class("sub-header")
+        v_title.pack_start(lbl_head, False, False, 0)
+        v_title.pack_start(lbl_sub, False, False, 0)
+        top_box.pack_start(v_title, True, True, 0)
+        
+        # Right digital registers
+        reg_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        
+        self.comp_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        self.comp_box.get_style_context().add_class("comp-tile")
+        self.comp_box.get_style_context().add_class("active")
+        self.lbl_comp = Gtk.Label(label="SYS OK")
+        self.lbl_comp.set_valign(Gtk.Align.CENTER)
+        self.comp_box.pack_start(self.lbl_comp, True, True, 2)
+        reg_box.pack_start(self.comp_box, False, False, 0)
+        
+        # PROG
+        p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        p_box.get_style_context().add_class("digital-box")
+        lbl_p_tag = Gtk.Label(label="PROG")
+        lbl_p_tag.get_style_context().add_class("digital-lbl")
+        self.lbl_prog_val = Gtk.Label(label="72")
+        self.lbl_prog_val.get_style_context().add_class("digital-val")
+        p_box.pack_start(lbl_p_tag, False, False, 0)
+        p_box.pack_start(self.lbl_prog_val, False, False, 0)
+        reg_box.pack_start(p_box, False, False, 0)
+        
+        # NOUN
+        n_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        n_box.get_style_context().add_class("digital-box")
+        lbl_n_tag = Gtk.Label(label="NOUN")
+        lbl_n_tag.get_style_context().add_class("digital-lbl")
+        self.lbl_noun_val = Gtk.Label(label="01")
+        self.lbl_noun_val.get_style_context().add_class("digital-val")
+        n_box.pack_start(lbl_n_tag, False, False, 0)
+        n_box.pack_start(self.lbl_noun_val, False, False, 0)
+        reg_box.pack_start(n_box, False, False, 0)
+        
+        top_box.pack_start(reg_box, False, False, 0)
+        
+        # --- 2. MAIN BODY (Split: Left Roles Menu, Right Role Configuration) ---
+        main_hsplit = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        chassis.pack_start(main_hsplit, True, True, 0)
+        
+        # LEFT: Subsystem Roles List
+        left_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        left_vbox.set_size_request(220, -1)
+        main_hsplit.pack_start(left_vbox, False, False, 0)
+        
+        self.role_buttons = []
+        for idx, role in enumerate(ROLES):
+            btn = Gtk.Button(label=f"[{role['code']}] {role['title']}")
+            btn.get_style_context().add_class("role-btn")
+            btn.set_can_focus(False)
+            btn.set_focus_on_click(False)
+            if idx == 0:
+                btn.get_style_context().add_class("active")
+            btn.connect("clicked", self.on_role_button_clicked, idx)
+            left_vbox.pack_start(btn, False, False, 0)
+            self.role_buttons.append(btn)
+            
+        # RIGHT: Detail & Candidate Application Selection
+        self.right_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.right_container.get_style_context().add_class("card-panel")
+        main_hsplit.pack_start(self.right_container, True, True, 0)
+        
+        # --- 3. FOOTER TELEMETRY & CONTROLS ---
+        footer_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chassis.pack_start(footer_box, False, False, 0)
+        
+        self.status_banner = Gtk.Label(label="TELEMETRY STATUS: READY // SELECT SUBSYSTEM HANDLER", xalign=0)
+        self.status_banner.get_style_context().add_class("status-banner")
+        footer_box.pack_start(self.status_banner, True, True, 0)
+        
+        btn_close = Gtk.Button(label="[ESC] CLOSE")
+        btn_close.get_style_context().add_class("action-btn")
+        btn_close.set_can_focus(False)
+        btn_close.connect("clicked", lambda b: self.close_manager())
+        footer_box.pack_start(btn_close, False, False, 0)
+
+    def on_role_button_clicked(self, btn, idx):
+        self.load_role_view(idx)
+
+    def load_role_view(self, role_idx):
+        self.current_role_idx = role_idx
+        role = ROLES[role_idx]
+        self.lbl_noun_val.set_text(role["code"])
+        
+        for i, b in enumerate(self.role_buttons):
+            if i == role_idx:
+                b.get_style_context().add_class("active")
+            else:
+                b.get_style_context().remove_class("active")
+                
+        # Clear right container
+        for child in self.right_container.get_children():
+            self.right_container.remove(child)
+            
+        # 1. Header of selected role
+        r_head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        lbl_r_title = Gtk.Label(label=f"SUBSYSTEM [{role['code']}]: {role['title']}", xalign=0)
+        lbl_r_title.get_style_context().add_class("title-header")
+        lbl_r_desc = Gtk.Label(label=role["desc"], xalign=0)
+        lbl_r_desc.get_style_context().add_class("app-cmd-lbl")
+        r_head.pack_start(lbl_r_title, False, False, 0)
+        r_head.pack_start(lbl_r_desc, False, False, 0)
+        self.right_container.pack_start(r_head, False, False, 0)
+        
+        # 2. Find Candidates for this role
+        candidates = self.find_candidates_for_role(role)
+        candidate_desktop_ids = {c["desktop_id"] for c in candidates}
+        candidate_execs = {c["exec"] for c in candidates}
+        
+        # Determine Current Active Handler
+        mime_defaults = read_mimeapps()
+        hypr_vars = read_hyprland_vars()
+        
+        current_handler_id = None
+        current_app_info = None
+        
+        if "is_hyprland_var" in role:
+            var_val = hypr_vars.get(role["is_hyprland_var"], "")
+            for c in candidates:
+                if c["exec"] == var_val or var_val in c["exec"] or var_val in c["desktop_id"]:
+                    current_handler_id = c["desktop_id"]
+                    current_app_info = c
+                    break
+            if not current_app_info and var_val:
+                current_handler_id = var_val
+                current_app_info = {"name": var_val.capitalize(), "exec": var_val, "desktop_id": var_val}
+        else:
+            for m in role["mimes"]:
+                if m in mime_defaults:
+                    def_id = mime_defaults[m]
+                    if def_id in candidate_desktop_ids:
+                        for c in candidates:
+                            if c["desktop_id"] == def_id:
+                                current_handler_id = def_id
+                                current_app_info = c
+                                break
+                    break
+                    
+        # If no explicit default was set yet, but candidates exist, consider the first one as active candidate
+        if not current_app_info and candidates:
+            current_app_info = candidates[0]
+            current_handler_id = candidates[0]["desktop_id"]
+            
+        # Display Current Active Box
+        curr_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        curr_box.get_style_context().add_class("app-item-box")
+        if current_app_info:
+            curr_box.get_style_context().add_class("selected")
+        
+        v_curr = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        h_tag = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_c_tag = Gtk.Label(label="ACTIVE HANDLER" if current_app_info else "UNCONFIGURED")
+        lbl_c_tag.get_style_context().add_class("current-badge" if current_app_info else "unconfigured-badge")
+        
+        c_name = current_app_info["name"] if current_app_info else "NO COMPATIBLE APPLICATION CONFIGURED"
+        lbl_c_name = Gtk.Label(label=c_name, xalign=0)
+        lbl_c_name.get_style_context().add_class("app-name-lbl")
+        h_tag.pack_start(lbl_c_tag, False, False, 0)
+        h_tag.pack_start(lbl_c_name, False, False, 0)
+        v_curr.pack_start(h_tag, False, False, 0)
+        
+        if current_app_info:
+            c_exec = current_app_info.get("exec", "")
+            lbl_c_cmd = Gtk.Label(label=f"BINARY/EXEC: {c_exec}", xalign=0)
+        else:
+            lbl_c_cmd = Gtk.Label(label="STATUS: NO APPLICATION REGISTERED FOR THIS PROTOCOL", xalign=0)
+        lbl_c_cmd.get_style_context().add_class("app-cmd-lbl")
+        v_curr.pack_start(lbl_c_cmd, False, False, 0)
+        curr_box.pack_start(v_curr, True, True, 0)
+        
+        # Test button for current
+        if current_app_info:
+            btn_test = Gtk.Button(label="[TEST LAUNCH]")
+            btn_test.get_style_context().add_class("action-btn")
+            btn_test.set_can_focus(False)
+            btn_test.connect("clicked", lambda b, cmd=current_app_info.get("exec", ""): self.test_launch_app(cmd))
+            curr_box.pack_start(btn_test, False, False, 0)
+            
+        self.right_container.pack_start(curr_box, False, False, 0)
+        
+        # 3. List of Available Candidate Applications or Empty State
+        lbl_cand_title = Gtk.Label(label="DETECTED COMPATIBLE APPLICATIONS", xalign=0)
+        lbl_cand_title.get_style_context().add_class("title-header")
+        lbl_cand_title.set_margin_top(4)
+        self.right_container.pack_start(lbl_cand_title, False, False, 0)
+        
+        if not candidates:
+            empty_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            empty_box.get_style_context().add_class("empty-state-box")
+            lbl_warn = Gtk.Label(label="[!] NO COMPATIBLE APPLICATIONS DETECTED", xalign=0)
+            lbl_warn.get_style_context().add_class("empty-warn-lbl")
+            lbl_desc = Gtk.Label(
+                label=f"No application package found for subsystem [{role['title']}].\nInstall a dedicated package (e.g. for Email: Thunderbird, Betterbird, or Geary) to register as default handler.",
+                xalign=0
+            )
+            lbl_desc.get_style_context().add_class("empty-desc-lbl")
+            empty_box.pack_start(lbl_warn, False, False, 0)
+            empty_box.pack_start(lbl_desc, False, False, 0)
+            self.right_container.pack_start(empty_box, True, True, 0)
+        else:
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_name("cand-scroll")
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_vexpand(True)
+            self.right_container.pack_start(scroll, True, True, 0)
+            
+            cand_listbox = Gtk.ListBox()
+            cand_listbox.set_name("cand-listbox")
+            cand_listbox.get_style_context().add_class("cand-listbox")
+            cand_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+            scroll.add(cand_listbox)
+            
+            for cand in candidates:
+                c_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                c_box.get_style_context().add_class("app-item-box")
+                
+                is_active = (current_handler_id == cand["desktop_id"]) or (current_app_info and current_app_info["exec"] == cand["exec"])
+                if is_active:
+                    c_box.get_style_context().add_class("selected")
+                    
+                v_cand = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+                lbl_name = Gtk.Label(label=cand["name"], xalign=0)
+                lbl_name.get_style_context().add_class("app-name-lbl")
+                lbl_cmd = Gtk.Label(label=f"{cand['exec']}", xalign=0)
+                lbl_cmd.get_style_context().add_class("app-cmd-lbl")
+                v_cand.pack_start(lbl_name, False, False, 0)
+                v_cand.pack_start(lbl_cmd, False, False, 0)
+                c_box.pack_start(v_cand, True, True, 0)
+                
+                btn_set = Gtk.Button(label="[ACTIVE]" if is_active else "[SET DEFAULT]")
+                btn_set.get_style_context().add_class("action-btn")
+                if not is_active:
+                    btn_set.get_style_context().add_class("primary")
+                btn_set.set_can_focus(False)
+                btn_set.connect("clicked", self.on_set_default_clicked, role, cand)
+                c_box.pack_start(btn_set, False, False, 0)
+                
+                cand_listbox.add(c_box)
+            
+        self.right_container.show_all()
+
+    def find_candidates_for_role(self, role):
+        candidates = []
+        seen_names = set()
+        role_id = role["id"]
+        filter_rule = ROLE_FILTERS.get(role_id, {})
+        
+        # Match from scanned desktop apps
+        for aid, ainfo in self.all_apps.items():
+            matched = False
+            
+            # Match against exact categories
+            low_cats = [c.lower() for c in ainfo["categories"]]
+            if filter_rule.get("cats") and any(c in low_cats for c in filter_rule["cats"]):
+                matched = True
+                    
+            # Match against regex
+            if not matched and filter_rule.get("regex"):
+                search_str = f"{ainfo['name']} {ainfo['exec']} {ainfo['generic']}".lower()
+                if re.search(filter_rule["regex"], search_str):
+                    matched = True
+                    
+            # Apply exclusion filter
+            if matched and filter_rule.get("exclude"):
+                search_str = f"{ainfo['name']} {ainfo['exec']} {ainfo['generic']} {' '.join(ainfo['categories'])}".lower()
+                if re.search(filter_rule["exclude"], search_str):
+                    matched = False
+                    
+            if matched and ainfo["name"] not in seen_names:
+                seen_names.add(ainfo["name"])
+                candidates.append(ainfo)
+                
+        candidates.sort(key=lambda x: x["name"].lower())
+        return candidates
+
+    def on_set_default_clicked(self, btn, role, cand):
+        # 1. Update Hyprland configuration if applicable
+        if "is_hyprland_var" in role:
+            var_name = role["is_hyprland_var"]
+            clean_cmd = cand["exec"].split()[0]
+            set_hyprland_var(var_name, clean_cmd)
+            
+        # 2. Update XDG Mime defaults
+        set_mime_defaults(cand["desktop_id"], role["mimes"])
+        
+        # 3. Update status banner
+        self.status_banner.set_text(f"UPDATED [{role['title']}]: ACTIVE HANDLER -> {cand['name'].upper()} ({cand['desktop_id']})")
+        
+        # 4. Refresh view
+        self.load_role_view(self.current_role_idx)
+
+    def test_launch_app(self, exec_cmd):
+        if not exec_cmd:
+            return
+        cmd = re.sub(r"%[a-zA-Z]", "", exec_cmd).strip()
+        try:
+            subprocess.Popen(cmd, shell=True, start_new_session=True)
+            self.status_banner.set_text(f"TEST LAUNCH INITIATED: {cmd}")
+        except Exception as e:
+            self.status_banner.set_text(f"LAUNCH ERROR: {e}")
+
+    def on_key_press(self, widget, event):
+        keyval = event.keyval
+        if keyval == Gdk.KEY_Escape:
+            self.close_manager()
+            return True
+        elif keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
+            prev_idx = (self.current_role_idx - 1 + len(ROLES)) % len(ROLES)
+            self.load_role_view(prev_idx)
+            return True
+        elif keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down, Gdk.KEY_Tab):
+            next_idx = (self.current_role_idx + 1) % len(ROLES)
+            self.load_role_view(next_idx)
+            return True
+        return False
+
+    def close_manager(self):
+        Gtk.main_quit()
+        self.destroy()
+
+if __name__ == "__main__":
+    app = DefaultAppsManager()
+    app.show_all()
+    Gtk.main()

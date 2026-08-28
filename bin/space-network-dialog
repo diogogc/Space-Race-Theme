@@ -1,0 +1,2343 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Network & Communications Subsystem Console
+Live RF Signal Telemetry, S-Band Transceiver, Wi-Fi Station Selector,
+Hidden Networks Registration, VPN Secure Tunnel & Bluetooth Subsystem Management.
+Inspired by Apollo Mission Operations Control Room (MOCR) Comms & Telemetry Consoles.
+Zero white backgrounds — pure dark chassis, phosphor glows, and precision mechanical/digital indicators.
+"""
+import sys, os, subprocess, signal, time, threading, re
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import cairo
+
+PID_FILE = f"/tmp/space-network-dialog-{os.getuid()}.pid"
+
+THEMES = {
+    "nasa": {
+        "bg": "#0a0d12",
+        "bg_panel": "#11161f",
+        "bg_bezel": "#070a0e",
+        "track_bg": "#030406",
+        "border": "#ffb000",
+        "border_dim": "#263242",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#768696",
+        "btn_bg": "#0a0d12",
+        "btn_border": "#283444",
+        "btn_hover": "#1e2633",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "yellow": "#ffb000",
+        "red": "#ff3b30",
+        "needle": "#ffb000",
+        "radius": "3px",
+    },
+    "crt-amber": {
+        "bg": "#060709",
+        "bg_panel": "#0d0f14",
+        "bg_bezel": "#040507",
+        "track_bg": "#020304",
+        "border": "#ff9e00",
+        "border_dim": "#402800",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#805200",
+        "btn_bg": "#060709",
+        "btn_border": "#3a2400",
+        "btn_hover": "#221500",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "yellow": "#cca000",
+        "red": "#ff5533",
+        "needle": "#ff9e00",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#040704",
+        "bg_panel": "#0a110a",
+        "bg_bezel": "#030603",
+        "track_bg": "#010301",
+        "border": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#030603",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#0c240c",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "yellow": "#99ff33",
+        "red": "#ff4444",
+        "needle": "#33ff33",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#060e0c",
+        "bg_panel": "#0c1b17",
+        "bg_bezel": "#040908",
+        "track_bg": "#020504",
+        "border": "#48e5c2",
+        "border_dim": "#183d34",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#060d0b",
+        "btn_border": "#1a4037",
+        "btn_hover": "#123028",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "yellow": "#d4e09b",
+        "red": "#ff4860",
+        "needle": "#48e5c2",
+        "radius": "2px",
+    }
+}
+
+DNS_PRESETS = [
+    ("cloudflare", "Cloudflare DNS", "1.1.1.1 1.0.0.1", "1.1.1.1", "Ultra-fast private relay (1.1.1.1 / 1.0.0.1)"),
+    ("google", "Google Public DNS", "8.8.8.8 8.8.4.4", "8.8.8.8", "Global high-reliability resolver (8.8.8.8 / 8.8.4.4)"),
+    ("quad9", "Quad9 Secure", "9.9.9.9 149.112.112.112", "9.9.9.9", "Threat intelligence &amp; malware blocking (9.9.9.9)"),
+    ("adguard", "AdGuard DNS", "94.140.14.14 94.140.15.15", "94.140.14.14", "Ad-blocking &amp; privacy tracking filter (94.140.14.14)"),
+    ("opendns", "OpenDNS (Cisco)", "208.67.222.222 208.67.220.220", "208.67.222.222", "Cisco Umbrella security &amp; filtering (208.67.222.222)"),
+    ("dhcp", "DHCP Automatic", "", "", "Default gateway provided DNS (Router assigned)")
+]
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip('#')
+    return tuple(int(hex_str[i:i+2], 16)/255.0 for i in (0, 2, 4))
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def pct_to_smeter(pct):
+    if pct <= 0:
+        return "S0", -100, 0
+    dbm = int((pct * 0.7) - 100)
+    if pct >= 97:
+        return "S9+30dB", dbm, 12
+    elif pct >= 92:
+        return "S9+20dB", dbm, 11
+    elif pct >= 85:
+        return "S9+10dB", dbm, 10
+    elif pct >= 75:
+        return "S9", dbm, 9
+    elif pct >= 65:
+        return "S8", dbm, 8
+    elif pct >= 55:
+        return "S7", dbm, 7
+    elif pct >= 45:
+        return "S6", dbm, 6
+    elif pct >= 35:
+        return "S5", dbm, 5
+    elif pct >= 25:
+        return "S4", dbm, 4
+    elif pct >= 15:
+        return "S3", dbm, 3
+    elif pct >= 6:
+        return "S2", dbm, 2
+    else:
+        return "S1", dbm, 1
+
+class ApolloRfSignalGauge(Gtk.DrawingArea):
+    """
+    Vintage Radio Receiver S-Meter (Signal Strength Meter)
+    Calibrated in S-Units (S1-S9, 6 dB/S-unit) and Decibels above S9 (+10dB, +20dB, +30dB).
+    """
+    def __init__(self, pal):
+        super().__init__()
+        self.set_size_request(260, 92)
+        self.pal = pal
+        self.signal_pct = 0
+        self.is_connected = False
+        self.status_label = "OFFLINE"
+        self.mode = "wifi"
+        self.readout_override = ""
+        self.connect("draw", self.on_draw)
+
+    def set_signal(self, pct, connected=True, status="NOMINAL", mode="wifi", readout_override=""):
+        self.signal_pct = max(0, min(100, pct))
+        self.is_connected = connected
+        self.status_label = status
+        self.mode = mode
+        self.readout_override = readout_override
+        self.queue_draw()
+
+    def on_draw(self, widget, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.5)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.stroke()
+
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        dim_r, dim_g, dim_b = hex_to_rgb(self.pal["text_dim"])
+        sub_r, sub_g, sub_b = hex_to_rgb(self.pal["text_sub"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+        yel_r, yel_g, yel_b = hex_to_rgb(self.pal["yellow"])
+        red_r, red_g, red_b = hex_to_rgb(self.pal["red"])
+
+        title_text = "HARDWIRE UMBILICAL (ETH)" if self.mode == "ethernet" else "S-BAND RECEIVER S-METER"
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(8.2)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        cr.move_to(8, 14)
+        cr.show_text(title_text)
+
+        s_unit, cur_dbm, s_idx = pct_to_smeter(self.signal_pct)
+
+        if self.readout_override:
+            disp_txt = self.readout_override
+            col_r, col_g, col_b = (grn_r, grn_g, grn_b)
+        elif self.mode == "ethernet" and self.is_connected:
+            disp_txt = "1000M SOLID"
+            col_r, col_g, col_b = (grn_r, grn_g, grn_b)
+        elif self.is_connected:
+            disp_txt = f"{s_unit} ({cur_dbm} dBm)"
+            col_r, col_g, col_b = (grn_r, grn_g, grn_b) if s_idx >= 7 else ((yel_r, yel_g, yel_b) if s_idx >= 4 else (red_r, red_g, red_b))
+        else:
+            disp_txt = "S0 (NO CARRIER)"
+            col_r, col_g, col_b = (red_r, red_g, red_b)
+
+        cr.set_font_size(8.8)
+        cr.set_source_rgb(col_r, col_g, col_b)
+        ext = cr.text_extents(disp_txt)
+        cr.move_to(width - 8 - ext.width, 14)
+        cr.show_text(disp_txt)
+
+        track_x = 8
+        track_y = 20
+        track_w = width - 16
+        track_h = 16
+
+        tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+        cr.set_line_width(1.0)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.stroke()
+
+        num_bars = 24
+        if self.is_connected and (self.signal_pct > 0 or self.mode == "ethernet"):
+            bars_to_fill = num_bars if self.mode == "ethernet" else max(1, int((self.signal_pct / 100.0) * num_bars))
+            bar_spacing = (track_w - 4) / float(num_bars)
+
+            for b in range(bars_to_fill):
+                bx = track_x + 2 + b * bar_spacing
+                bw = max(2.0, bar_spacing - 1.5)
+                if self.mode == "ethernet":
+                    cr.set_source_rgba(grn_r, grn_g, grn_b, 0.95)
+                else:
+                    if b < 6:
+                        cr.set_source_rgba(red_r, red_g, red_b, 0.9)
+                    elif b < 12:
+                        cr.set_source_rgba(yel_r, yel_g, yel_b, 0.9)
+                    elif b < 17:
+                        cr.set_source_rgba(grn_r, grn_g, grn_b, 0.92)
+                    else:
+                        cr.set_source_rgba(red_r, red_g, red_b, 0.95)
+                cr.rectangle(bx, track_y + 2, bw, track_h - 4)
+                cr.fill()
+
+        s_ticks = [
+            (0.10, "1", False),
+            (0.18, "", True),
+            (0.25, "3", False),
+            (0.33, "", True),
+            (0.40, "5", False),
+            (0.48, "", True),
+            (0.55, "7", False),
+            (0.63, "", True),
+            (0.70, "9", False),
+            (0.80, "+10", False),
+            (0.90, "+20", False),
+            (1.00, "+30", False)
+        ]
+
+        for pos_ratio, val_str, is_minor in s_ticks:
+            tx = track_x + pos_ratio * track_w
+            is_over9 = (pos_ratio >= 0.75)
+            tick_len = 3 if is_minor else 5
+
+            if is_over9:
+                cr.set_source_rgba(red_r, red_g, red_b, 0.95)
+            else:
+                cr.set_source_rgba(acc_r, acc_g, acc_b, 0.4 if is_minor else 0.85)
+
+            cr.set_line_width(1.0)
+            cr.move_to(tx, track_y + track_h + 1)
+            cr.line_to(tx, track_y + track_h + 1 + tick_len)
+            cr.stroke()
+
+            if val_str:
+                cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+                cr.set_font_size(6.5)
+                vext = cr.text_extents(val_str)
+                cr.move_to(tx - vext.width / 2.0, track_y + track_h + 12)
+                cr.show_text(val_str)
+
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(6.2)
+        cr.set_source_rgb(dim_r, dim_g, dim_b)
+        cr.move_to(track_x, track_y + track_h + 21)
+        cr.show_text("S-UNITS (6dB/S)")
+
+        cr.set_source_rgb(red_r, red_g, red_b)
+        ext_over = cr.text_extents("+dB OVER 9")
+        cr.move_to(track_x + track_w - ext_over.width, track_y + track_h + 21)
+        cr.show_text("+dB OVER 9")
+
+        lock_txt = f"CARRIER LOCK: {self.status_label}"
+        if self.is_connected and self.mode == "wifi":
+            lock_txt += f" [{s_unit}]"
+        cr.set_font_size(7.0)
+        cr.set_source_rgb(sub_r, sub_g, sub_b)
+        cr.move_to(8, height - 7)
+        cr.show_text(lock_txt)
+
+        cr.restore()
+        return False
+
+class SpaceNetworkDialog(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Apollo Mission Control Comms & Telemetry")
+        self.set_wmclass("space-network-dialog", "space-network-dialog")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(740, 590)
+
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+        self.stations = []
+        self.saved_connections = {}
+        self.active_ssid = ""
+        self.active_dev = ""
+        self.active_type = ""
+        self.active_vpn = ""
+        self.current_dns = "--"
+        self.vpn_connections = []
+        self.bt_devices = []
+        self.bt_powered = False
+        self.bt_scanning = False
+        self.bt_connected_name = ""
+        self.wifi_enabled = True
+        self.is_scanning = False
+        self.comm_testing = False
+        self.selected_station_idx = 0
+        self.station_widgets = []
+        self.connecting_ssid = None
+        self.dns_ping_labels = {}
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+        self.update_network_status()
+        self.update_bluetooth_status()
+        self.scan_wifi_networks()
+        GLib.timeout_add(2000, self.update_network_status)
+        GLib.timeout_add(3000, self.update_bluetooth_status)
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+            background-color: transparent;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_panel']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 10px 18px;
+        }}
+        .telemetry-card {{
+            background-color: {self.pal['bg_panel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+        }}
+        .station-card, .vpn-card, .bt-card, .dns-card {{
+            background-color: {self.pal['bg_panel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+            margin-bottom: 6px;
+        }}
+        .station-card.selected, .vpn-card.selected, .bt-card.selected, .dns-card.selected {{
+            border: 1px solid {self.pal['accent']};
+            background-color: {self.pal['btn_hover']};
+        }}
+        .station-card.active, .vpn-card.active, .bt-card.active, .dns-card.active {{
+            border: 1.5px solid {self.pal['green']};
+        }}
+        button,
+        button.action-btn {{
+            background-image: none;
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 5px 9px;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        button.action-btn:hover {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        button.connect-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['accent']};
+            border-radius: {self.pal['radius']};
+            padding: 4px 9px;
+        }}
+        button.connect-btn:hover {{
+            background-color: {self.pal['btn_hover']};
+        }}
+        button.disconnect-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['red']};
+            border-radius: {self.pal['radius']};
+            padding: 4px 9px;
+        }}
+        button.disconnect-btn:hover {{
+            background-color: #3b1111;
+        }}
+        entry {{
+            background-color: {self.pal['track_bg']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            color: {self.pal['text_main']};
+            padding: 8px 10px;
+        }}
+        entry:focus {{
+            border: 1px solid {self.pal['accent']};
+        }}
+        combobox button.combo {{
+            background-color: {self.pal['track_bg']};
+            border: 1px solid {self.pal['border_dim']};
+            color: {self.pal['text_main']};
+        }}
+        scrollbar slider {{
+            background-color: {self.pal['accent']};
+            border-radius: 2px;
+            min-width: 6px;
+        }}
+        scrollbar trough {{
+            background-color: {self.pal['track_bg']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(150)
+        self.add(self.stack)
+
+        self.build_main_view()
+        self.build_auth_view()
+        self.build_hidden_view()
+        self.build_vpn_view()
+        self.build_bluetooth_view()
+        self.build_comm_test_view()
+        self.stack.set_visible_child_name("main")
+
+    def build_main_view(self):
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>📡 APOLLO MISSION CONTROL // COMMS &amp; TELEMETRY UPLINK</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>S-BAND RF TRANSCEIVER, HARDWIRE UMBILICAL, COMM TEST &amp; DNS // {self.theme_name.upper()}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        main_vbox.pack_start(header, False, False, 0)
+
+        # Body Container
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(14)
+        body.set_margin_right(14)
+
+        # Signal Gauge + Telemetry Card
+        top_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+
+        self.rf_gauge = ApolloRfSignalGauge(self.pal)
+        top_hbox.pack_start(self.rf_gauge, False, False, 0)
+
+        self.telemetry_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        self.telemetry_card.get_style_context().add_class("telemetry-card")
+
+        self.lbl_link_status = Gtk.Label()
+        self.lbl_link_status.set_xalign(0.0)
+        self.telemetry_card.pack_start(self.lbl_link_status, False, False, 0)
+
+        self.lbl_link_ip = Gtk.Label()
+        self.lbl_link_ip.set_xalign(0.0)
+        self.telemetry_card.pack_start(self.lbl_link_ip, False, False, 0)
+
+        self.lbl_link_rf = Gtk.Label()
+        self.lbl_link_rf.set_xalign(0.0)
+        self.telemetry_card.pack_start(self.lbl_link_rf, False, False, 0)
+
+        top_hbox.pack_start(self.telemetry_card, True, True, 0)
+        body.pack_start(top_hbox, False, False, 0)
+
+        # Action Buttons Toolbar
+        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+
+        # Radio Toggle
+        self.btn_radio = Gtk.Button()
+        self.btn_radio.get_style_context().add_class("action-btn")
+        self.lbl_btn_radio = Gtk.Label()
+        self.lbl_btn_radio.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_main']}'>[ RADIO: ON ]</span>")
+        self.btn_radio.add(self.lbl_btn_radio)
+        self.btn_radio.connect("clicked", self.toggle_radio)
+        action_bar.pack_start(self.btn_radio, False, False, 0)
+
+        # Rescan Stations
+        self.btn_rescan = Gtk.Button()
+        self.btn_rescan.get_style_context().add_class("action-btn")
+        lbl_r = Gtk.Label()
+        lbl_r.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ RESCAN ]</span>")
+        self.btn_rescan.add(lbl_r)
+        self.btn_rescan.connect("clicked", lambda w: self.scan_wifi_networks(force_rescan=True))
+        action_bar.pack_start(self.btn_rescan, False, False, 0)
+
+        # Hidden Network Button
+        self.btn_hidden = Gtk.Button()
+        self.btn_hidden.get_style_context().add_class("action-btn")
+        lbl_h = Gtk.Label()
+        lbl_h.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_sub']}'>[ HIDDEN SSID ]</span>")
+        self.btn_hidden.add(lbl_h)
+        self.btn_hidden.connect("clicked", lambda w: self.open_hidden_view())
+        action_bar.pack_start(self.btn_hidden, False, False, 0)
+
+        # Comm Test & DNS Button
+        self.btn_comm_test = Gtk.Button()
+        self.btn_comm_test.get_style_context().add_class("action-btn")
+        lbl_ct = Gtk.Label()
+        lbl_ct.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['yellow']}'>[ COMM TEST &amp; DNS ]</span>")
+        self.btn_comm_test.add(lbl_ct)
+        self.btn_comm_test.connect("clicked", lambda w: self.open_comm_test_view())
+        action_bar.pack_start(self.btn_comm_test, False, False, 0)
+
+        # VPN Config Button
+        self.btn_vpn = Gtk.Button()
+        self.btn_vpn.get_style_context().add_class("action-btn")
+        self.lbl_btn_vpn = Gtk.Label()
+        self.lbl_btn_vpn.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ VPN CONFIG ]</span>")
+        self.btn_vpn.add(self.lbl_btn_vpn)
+        self.btn_vpn.connect("clicked", lambda w: self.open_vpn_view())
+        action_bar.pack_start(self.btn_vpn, False, False, 0)
+
+        # Bluetooth Button
+        self.btn_bluetooth = Gtk.Button()
+        self.btn_bluetooth.get_style_context().add_class("action-btn")
+        self.lbl_btn_bluetooth = Gtk.Label()
+        self.lbl_btn_bluetooth.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ BLUETOOTH ]</span>")
+        self.btn_bluetooth.add(self.lbl_btn_bluetooth)
+        self.btn_bluetooth.connect("clicked", lambda w: self.open_bluetooth_view())
+        action_bar.pack_start(self.btn_bluetooth, False, False, 0)
+
+        # NM Editor Button
+        self.btn_nm_editor = Gtk.Button()
+        self.btn_nm_editor.get_style_context().add_class("action-btn")
+        lbl_nm = Gtk.Label()
+        lbl_nm.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>[ NM-CONFIG ]</span>")
+        self.btn_nm_editor.add(lbl_nm)
+        self.btn_nm_editor.connect("clicked", self.launch_nm_editor)
+        action_bar.pack_start(self.btn_nm_editor, False, False, 0)
+
+        body.pack_start(action_bar, False, False, 0)
+
+        # Scanned Stations Section
+        stations_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_st_title = Gtk.Label()
+        lbl_st_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>COMM STATIONS &amp; ACCESS POINTS:</span>")
+        stations_header.pack_start(lbl_st_title, False, False, 0)
+
+        self.lbl_scan_status = Gtk.Label()
+        self.lbl_scan_status.set_xalign(1.0)
+        stations_header.pack_end(self.lbl_scan_status, False, False, 0)
+        body.pack_start(stations_header, False, False, 0)
+
+        self.scrolled = Gtk.ScrolledWindow()
+        self.scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.scrolled.set_min_content_height(240)
+
+        self.stations_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.stations_vbox.set_margin_right(4)
+        self.scrolled.add(self.stations_vbox)
+        body.pack_start(self.scrolled, True, True, 0)
+
+        main_vbox.pack_start(body, True, True, 0)
+
+        # Footer
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ ENTER ] CONNECT   [ T ] COMM TEST &amp; DNS   [ H ] HIDDEN   [ V ] VPN   [ B ] BLUETOOTH   [ ESC ] CLOSE</span>")
+        footer.set_margin_bottom(8)
+        main_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(main_vbox, "main")
+
+    def build_auth_view(self):
+        auth_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🔒 APOLLO DSKY // S-BAND ENCRYPTION KEY</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>VERB 21 NOUN 02 // SECURE STATION AUTHENTICATION</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        auth_vbox.pack_start(header, False, False, 0)
+
+        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        center_box.set_margin_top(24)
+        center_box.set_margin_bottom(20)
+        center_box.set_margin_left(24)
+        center_box.set_margin_right(24)
+
+        self.auth_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.auth_card.get_style_context().add_class("telemetry-card")
+
+        self.lbl_auth_target = Gtk.Label()
+        self.lbl_auth_target.set_xalign(0.0)
+        self.auth_card.pack_start(self.lbl_auth_target, False, False, 0)
+
+        lbl_prompt = Gtk.Label()
+        lbl_prompt.set_markup(f"<span font_size='8500' foreground='{self.pal['text_sub']}'>Enter security passphrase / WPA key for telemetry carrier lock:</span>")
+        lbl_prompt.set_xalign(0.0)
+        self.auth_card.pack_start(lbl_prompt, False, False, 0)
+
+        self.entry_pass = Gtk.Entry()
+        self.entry_pass.set_visibility(False)
+        self.entry_pass.set_placeholder_text("Encryption Passphrase...")
+        self.entry_pass.connect("activate", lambda e: self.submit_auth())
+        self.auth_card.pack_start(self.entry_pass, False, False, 0)
+
+        self.chk_show_pass = Gtk.CheckButton.new_with_label(" Reveal Passphrase")
+        self.chk_show_pass.connect("toggled", lambda w: self.entry_pass.set_visibility(w.get_active()))
+        self.auth_card.pack_start(self.chk_show_pass, False, False, 0)
+
+        self.lbl_auth_status = Gtk.Label()
+        self.lbl_auth_status.set_xalign(0.0)
+        self.auth_card.pack_start(self.lbl_auth_status, False, False, 0)
+
+        center_box.pack_start(self.auth_card, True, True, 0)
+
+        btns_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        btns_box.set_homogeneous(True)
+
+        self.btn_auth_connect = Gtk.Button()
+        self.btn_auth_connect.get_style_context().add_class("connect-btn")
+        lbl_c = Gtk.Label()
+        lbl_c.set_markup(f"<span font_weight='bold' foreground='{self.pal['green']}'>[ ENTER / AUTH ] ENGAGE LINK</span>")
+        self.btn_auth_connect.add(lbl_c)
+        self.btn_auth_connect.connect("clicked", lambda w: self.submit_auth())
+        btns_box.pack_start(self.btn_auth_connect, True, True, 0)
+
+        self.btn_auth_cancel = Gtk.Button()
+        self.btn_auth_cancel.get_style_context().add_class("action-btn")
+        lbl_can = Gtk.Label()
+        lbl_can.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>[ ESC ] CANCEL</span>")
+        self.btn_auth_cancel.add(lbl_can)
+        self.btn_auth_cancel.connect("clicked", lambda w: self.cancel_auth())
+        btns_box.pack_start(self.btn_auth_cancel, True, True, 0)
+
+        center_box.pack_start(btns_box, False, False, 0)
+        auth_vbox.pack_start(center_box, True, True, 0)
+
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>[ ENTER ] CONNECT   [ ESC ] ABORT AUTHENTICATION</span>")
+        footer.set_margin_bottom(8)
+        auth_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(auth_vbox, "auth")
+
+    def build_hidden_view(self):
+        hidden_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🕵️ APOLLO DSKY // MANUAL UPLINK (HIDDEN CARRIER)</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>VERB 21 NOUN 04 // NON-BROADCASTING ACCESS POINT REGISTRATION</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        hidden_vbox.pack_start(header, False, False, 0)
+
+        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        center_box.set_margin_top(18)
+        center_box.set_margin_bottom(18)
+        center_box.set_margin_left(24)
+        center_box.set_margin_right(24)
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.get_style_context().add_class("telemetry-card")
+
+        lbl_ssid = Gtk.Label()
+        lbl_ssid.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>STATION IDENTIFIER (SSID):</span>")
+        lbl_ssid.set_xalign(0.0)
+        card.pack_start(lbl_ssid, False, False, 0)
+
+        self.entry_hidden_ssid = Gtk.Entry()
+        self.entry_hidden_ssid.set_placeholder_text("Hidden Network Name / SSID...")
+        card.pack_start(self.entry_hidden_ssid, False, False, 0)
+
+        lbl_sec = Gtk.Label()
+        lbl_sec.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>SECURITY ENCRYPTION MODE:</span>")
+        lbl_sec.set_xalign(0.0)
+        card.pack_start(lbl_sec, False, False, 0)
+
+        self.combo_hidden_sec = Gtk.ComboBoxText()
+        self.combo_hidden_sec.append("wpa", "WPA / WPA2 / WPA3 Personal (PSK)")
+        self.combo_hidden_sec.append("open", "Open / None (Unencrypted)")
+        self.combo_hidden_sec.set_active(0)
+        card.pack_start(self.combo_hidden_sec, False, False, 0)
+
+        lbl_pass = Gtk.Label()
+        lbl_pass.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>SECURITY PASSPHRASE:</span>")
+        lbl_pass.set_xalign(0.0)
+        card.pack_start(lbl_pass, False, False, 0)
+
+        self.entry_hidden_pass = Gtk.Entry()
+        self.entry_hidden_pass.set_visibility(False)
+        self.entry_hidden_pass.set_placeholder_text("WPA Passphrase (leave blank if Open)...")
+        self.entry_hidden_pass.connect("activate", lambda e: self.submit_hidden_connect())
+        card.pack_start(self.entry_hidden_pass, False, False, 0)
+
+        self.chk_hidden_show = Gtk.CheckButton.new_with_label(" Reveal Passphrase")
+        self.chk_hidden_show.connect("toggled", lambda w: self.entry_hidden_pass.set_visibility(w.get_active()))
+        card.pack_start(self.chk_hidden_show, False, False, 0)
+
+        self.lbl_hidden_status = Gtk.Label()
+        self.lbl_hidden_status.set_xalign(0.0)
+        card.pack_start(self.lbl_hidden_status, False, False, 0)
+
+        center_box.pack_start(card, True, True, 0)
+
+        btns_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        btns_box.set_homogeneous(True)
+
+        self.btn_hidden_connect = Gtk.Button()
+        self.btn_hidden_connect.get_style_context().add_class("connect-btn")
+        lbl_c = Gtk.Label()
+        lbl_c.set_markup(f"<span font_weight='bold' foreground='{self.pal['green']}'>[ ENTER / AUTH ] CONNECT &amp; LOCK</span>")
+        self.btn_hidden_connect.add(lbl_c)
+        self.btn_hidden_connect.connect("clicked", lambda w: self.submit_hidden_connect())
+        btns_box.pack_start(self.btn_hidden_connect, True, True, 0)
+
+        self.btn_hidden_cancel = Gtk.Button()
+        self.btn_hidden_cancel.get_style_context().add_class("action-btn")
+        lbl_can = Gtk.Label()
+        lbl_can.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>[ ESC ] CANCEL</span>")
+        self.btn_hidden_cancel.add(lbl_can)
+        self.btn_hidden_cancel.connect("clicked", lambda w: self.stack.set_visible_child_name("main"))
+        btns_box.pack_start(self.btn_hidden_cancel, True, True, 0)
+
+        center_box.pack_start(btns_box, False, False, 0)
+        hidden_vbox.pack_start(center_box, True, True, 0)
+
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>[ ENTER ] CONNECT HIDDEN NETWORK   [ ESC ] ABORT</span>")
+        footer.set_margin_bottom(8)
+        hidden_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(hidden_vbox, "hidden")
+
+    def build_vpn_view(self):
+        vpn_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🛡️ APOLLO TELEMETRY // SECURE TUNNEL &amp; VPN CONFIG</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>ENCRYPTED S-BAND DISPATCH &amp; TUNNEL INTERFACE (OPENVPN / WIREGUARD)</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        vpn_vbox.pack_start(header, False, False, 0)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(14)
+        body.set_margin_right(14)
+
+        # VPN Status Overview
+        self.vpn_overview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.vpn_overview_card.get_style_context().add_class("telemetry-card")
+
+        self.lbl_vpn_active_status = Gtk.Label()
+        self.lbl_vpn_active_status.set_xalign(0.0)
+        self.vpn_overview_card.pack_start(self.lbl_vpn_active_status, False, False, 0)
+
+        self.lbl_vpn_details = Gtk.Label()
+        self.lbl_vpn_details.set_xalign(0.0)
+        self.vpn_overview_card.pack_start(self.lbl_vpn_details, False, False, 0)
+
+        body.pack_start(self.vpn_overview_card, False, False, 0)
+
+        # VPN Action Toolbar
+        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+
+        btn_add_vpn = Gtk.Button()
+        btn_add_vpn.get_style_context().add_class("action-btn")
+        lbl_av = Gtk.Label()
+        lbl_av.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ CREATE / EDIT VPN ]</span>")
+        btn_add_vpn.add(lbl_av)
+        btn_add_vpn.connect("clicked", lambda w: self.launch_nm_editor())
+        action_bar.pack_start(btn_add_vpn, False, False, 0)
+
+        btn_import_vpn = Gtk.Button()
+        btn_import_vpn.get_style_context().add_class("action-btn")
+        lbl_iv = Gtk.Label()
+        lbl_iv.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ IMPORT (.OVPN/.CONF) ]</span>")
+        btn_import_vpn.add(lbl_iv)
+        btn_import_vpn.connect("clicked", lambda w: self.import_vpn_file_dialog())
+        action_bar.pack_start(btn_import_vpn, False, False, 0)
+
+        body.pack_start(action_bar, False, False, 0)
+
+        # Configured VPNs List
+        lbl_vpns_title = Gtk.Label()
+        lbl_vpns_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>CONFIGURED VPN TUNNEL PROFILES:</span>")
+        lbl_vpns_title.set_xalign(0.0)
+        body.pack_start(lbl_vpns_title, False, False, 0)
+
+        self.vpn_scrolled = Gtk.ScrolledWindow()
+        self.vpn_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.vpn_scrolled.set_min_content_height(180)
+
+        self.vpn_list_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.vpn_list_vbox.set_margin_right(4)
+        self.vpn_scrolled.add(self.vpn_list_vbox)
+        body.pack_start(self.vpn_scrolled, True, True, 0)
+
+        # Back Button
+        btn_back = Gtk.Button()
+        btn_back.get_style_context().add_class("action-btn")
+        lbl_bk = Gtk.Label()
+        lbl_bk.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_dim']}'>[ RETURN TO COMMS CONSOLE ]</span>")
+        btn_back.add(lbl_bk)
+        btn_back.connect("clicked", lambda w: self.stack.set_visible_child_name("main"))
+        body.pack_start(btn_back, False, False, 0)
+
+        vpn_vbox.pack_start(body, True, True, 0)
+
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>[ ESC / BKSP ] RETURN TO CONSOLE   [ IMPORT ] LOAD CONFIG FILE</span>")
+        footer.set_margin_bottom(8)
+        vpn_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(vpn_vbox, "vpn")
+
+    def build_bluetooth_view(self):
+        bt_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>📡 APOLLO TELEMETRY // VHF SHORT-RANGE EVA &amp; BLUETOOTH</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>2.4 GHz ISM TRANSCEIVER &amp; PERIPHERAL DISPATCH // {self.theme_name.upper()}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        bt_vbox.pack_start(header, False, False, 0)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(14)
+        body.set_margin_right(14)
+
+        # Bluetooth Overview Card
+        self.bt_overview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        self.bt_overview_card.get_style_context().add_class("telemetry-card")
+
+        self.lbl_bt_power_status = Gtk.Label()
+        self.lbl_bt_power_status.set_xalign(0.0)
+        self.bt_overview_card.pack_start(self.lbl_bt_power_status, False, False, 0)
+
+        self.lbl_bt_active_device = Gtk.Label()
+        self.lbl_bt_active_device.set_xalign(0.0)
+        self.bt_overview_card.pack_start(self.lbl_bt_active_device, False, False, 0)
+
+        body.pack_start(self.bt_overview_card, False, False, 0)
+
+        # Bluetooth Action Toolbar
+        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        self.btn_bt_power = Gtk.Button()
+        self.btn_bt_power.get_style_context().add_class("action-btn")
+        self.lbl_bt_btn_pwr = Gtk.Label()
+        self.lbl_bt_btn_pwr.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ POWER: ON ]</span>")
+        self.btn_bt_power.add(self.lbl_bt_btn_pwr)
+        self.btn_bt_power.connect("clicked", lambda w: self.toggle_bluetooth_power())
+        action_bar.pack_start(self.btn_bt_power, False, False, 0)
+
+        self.btn_bt_scan = Gtk.Button()
+        self.btn_bt_scan.get_style_context().add_class("action-btn")
+        self.lbl_bt_btn_scan = Gtk.Label()
+        self.lbl_bt_btn_scan.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ SCAN DEVICES ]</span>")
+        self.btn_bt_scan.add(self.lbl_bt_btn_scan)
+        self.btn_bt_scan.connect("clicked", lambda w: self.scan_bluetooth_devices())
+        action_bar.pack_start(self.btn_bt_scan, False, False, 0)
+
+        btn_bt_pairable = Gtk.Button()
+        btn_bt_pairable.get_style_context().add_class("action-btn")
+        lbl_pair = Gtk.Label()
+        lbl_pair.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_sub']}'>[ PAIRABLE ]</span>")
+        btn_bt_pairable.add(lbl_pair)
+        btn_bt_pairable.connect("clicked", lambda w: self.toggle_bluetooth_pairable())
+        action_bar.pack_start(btn_bt_pairable, False, False, 0)
+
+        btn_blueman = Gtk.Button()
+        btn_blueman.get_style_context().add_class("action-btn")
+        lbl_bm = Gtk.Label()
+        lbl_bm.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>[ BLUEMAN GUI ]</span>")
+        btn_blueman.add(lbl_bm)
+        btn_blueman.connect("clicked", lambda w: self.launch_blueman())
+        action_bar.pack_start(btn_blueman, False, False, 0)
+
+        body.pack_start(action_bar, False, False, 0)
+
+        # Bluetooth Devices List Header
+        bt_list_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_bt_title = Gtk.Label()
+        lbl_bt_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>PAIRED &amp; DISCOVERED BLUETOOTH DEVICES:</span>")
+        bt_list_header.pack_start(lbl_bt_title, False, False, 0)
+
+        self.lbl_bt_scan_status = Gtk.Label()
+        self.lbl_bt_scan_status.set_xalign(1.0)
+        bt_list_header.pack_end(self.lbl_bt_scan_status, False, False, 0)
+        body.pack_start(bt_list_header, False, False, 0)
+
+        self.bt_scrolled = Gtk.ScrolledWindow()
+        self.bt_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.bt_scrolled.set_min_content_height(180)
+
+        self.bt_list_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.bt_list_vbox.set_margin_right(4)
+        self.bt_scrolled.add(self.bt_list_vbox)
+        body.pack_start(self.bt_scrolled, True, True, 0)
+
+        # Back Button
+        btn_back = Gtk.Button()
+        btn_back.get_style_context().add_class("action-btn")
+        lbl_bk = Gtk.Label()
+        lbl_bk.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_dim']}'>[ RETURN TO COMMS CONSOLE ]</span>")
+        btn_back.add(lbl_bk)
+        btn_back.connect("clicked", lambda w: self.stack.set_visible_child_name("main"))
+        body.pack_start(btn_back, False, False, 0)
+
+        bt_vbox.pack_start(body, True, True, 0)
+
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>[ ESC / BKSP ] RETURN TO CONSOLE   [ P ] POWER TOGGLE   [ S ] SCAN</span>")
+        footer.set_margin_bottom(8)
+        bt_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(bt_vbox, "bluetooth")
+
+    def build_comm_test_view(self):
+        comm_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>📡 APOLLO TELEMETRY // COMM TEST &amp; DNS GROUND STATION</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>PROPAGATION PING, BANDWIDTH SPEED TEST &amp; DNS RELAY DISPATCH // {self.theme_name.upper()}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        comm_vbox.pack_start(header, False, False, 0)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(14)
+        body.set_margin_right(14)
+
+        # Telemetry Diagnostics Card
+        self.test_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.test_card.get_style_context().add_class("telemetry-card")
+
+        self.lbl_test_status = Gtk.Label()
+        self.lbl_test_status.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>● COMM LINK DIAGNOSTIC READY</span>")
+        self.lbl_test_status.set_xalign(0.0)
+        self.test_card.pack_start(self.lbl_test_status, False, False, 0)
+
+        self.lbl_test_results = Gtk.Label()
+        self.lbl_test_results.set_markup(f"<span font_size='8200' foreground='{self.pal['text_sub']}'>PING: -- ms | LOSS: --% | DOWNLOAD: -- Mbit/s | UPLOAD: -- Mbit/s</span>")
+        self.lbl_test_results.set_xalign(0.0)
+        self.test_card.pack_start(self.lbl_test_results, False, False, 0)
+
+        self.lbl_test_dns_active = Gtk.Label()
+        self.lbl_test_dns_active.set_xalign(0.0)
+        self.test_card.pack_start(self.lbl_test_dns_active, False, False, 0)
+
+        body.pack_start(self.test_card, False, False, 0)
+
+        # Comm Test Actions
+        test_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        self.btn_run_test = Gtk.Button()
+        self.btn_run_test.get_style_context().add_class("connect-btn")
+        self.lbl_btn_run_test = Gtk.Label()
+        self.lbl_btn_run_test.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ RUN FULL COMM TEST ]</span>")
+        self.btn_run_test.add(self.lbl_btn_run_test)
+        self.btn_run_test.connect("clicked", lambda w: self.run_comm_test())
+        test_bar.pack_start(self.btn_run_test, False, False, 0)
+
+        self.btn_ping_dns = Gtk.Button()
+        self.btn_ping_dns.get_style_context().add_class("action-btn")
+        lbl_pd = Gtk.Label()
+        lbl_pd.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ PING ALL DNS ]</span>")
+        self.btn_ping_dns.add(lbl_pd)
+        self.btn_ping_dns.connect("clicked", lambda w: self.ping_all_dns_servers())
+        test_bar.pack_start(self.btn_ping_dns, False, False, 0)
+
+        body.pack_start(test_bar, False, False, 0)
+
+        # DNS Relay Presets List
+        lbl_dns_sec = Gtk.Label()
+        lbl_dns_sec.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>GROUND STATION DNS RELAYS (SELECT &amp; APPLY):</span>")
+        lbl_dns_sec.set_xalign(0.0)
+        body.pack_start(lbl_dns_sec, False, False, 0)
+
+        dns_scroll = Gtk.ScrolledWindow()
+        dns_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        dns_scroll.set_min_content_height(160)
+
+        self.dns_list_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.dns_list_vbox.set_margin_right(4)
+        dns_scroll.add(self.dns_list_vbox)
+        body.pack_start(dns_scroll, True, True, 0)
+
+        self.render_dns_presets()
+
+        # Custom DNS Entry & Apply Box
+        custom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl_cdns = Gtk.Label()
+        lbl_cdns.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>CUSTOM DNS:</span>")
+        custom_box.pack_start(lbl_cdns, False, False, 0)
+
+        self.entry_custom_dns = Gtk.Entry()
+        self.entry_custom_dns.set_placeholder_text("IPs e.g. 1.1.1.1 8.8.8.8...")
+        custom_box.pack_start(self.entry_custom_dns, True, True, 0)
+
+        btn_apply_custom = Gtk.Button()
+        btn_apply_custom.get_style_context().add_class("action-btn")
+        lbl_ac = Gtk.Label()
+        lbl_ac.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ APPLY CUSTOM ]</span>")
+        btn_apply_custom.add(lbl_ac)
+        btn_apply_custom.connect("clicked", lambda w: self.apply_custom_dns())
+        custom_box.pack_start(btn_apply_custom, False, False, 0)
+
+        body.pack_start(custom_box, False, False, 0)
+
+        # Back Button
+        btn_back = Gtk.Button()
+        btn_back.get_style_context().add_class("action-btn")
+        lbl_bk = Gtk.Label()
+        lbl_bk.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_dim']}'>[ RETURN TO COMMS CONSOLE ]</span>")
+        btn_back.add(lbl_bk)
+        btn_back.connect("clicked", lambda w: self.stack.set_visible_child_name("main"))
+        body.pack_start(btn_back, False, False, 0)
+
+        comm_vbox.pack_start(body, True, True, 0)
+
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>[ ESC / BKSP ] RETURN TO CONSOLE   [ R ] RUN COMM TEST   [ P ] PING DNS</span>")
+        footer.set_margin_bottom(8)
+        comm_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(comm_vbox, "comm_test")
+
+    def render_dns_presets(self):
+        for child in self.dns_list_vbox.get_children():
+            self.dns_list_vbox.remove(child)
+
+        self.dns_ping_labels = {}
+
+        for p_id, p_name, p_ips, p_ping_ip, p_desc in DNS_PRESETS:
+            card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            card.get_style_context().add_class("dns-card")
+
+            d_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            card.pack_start(d_info, True, True, 0)
+
+            title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            lbl_name = Gtk.Label()
+            lbl_name.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{p_name}</span>")
+            lbl_name.set_xalign(0.0)
+            title_box.pack_start(lbl_name, False, False, 0)
+
+            lbl_ping = Gtk.Label()
+            lbl_ping.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>[ RTT: -- ]</span>")
+            title_box.pack_start(lbl_ping, False, False, 0)
+            self.dns_ping_labels[p_id] = lbl_ping
+
+            d_info.pack_start(title_box, False, False, 0)
+
+            lbl_desc = Gtk.Label()
+            lbl_desc.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>{p_desc}</span>")
+            lbl_desc.set_xalign(0.0)
+            d_info.pack_start(lbl_desc, False, False, 0)
+
+            btn_set = Gtk.Button()
+            btn_set.get_style_context().add_class("connect-btn")
+            lbl_s = Gtk.Label()
+            lbl_s.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ ENGAGE ]</span>")
+            btn_set.add(lbl_s)
+            btn_set.connect("clicked", lambda w, ips=p_ips, name=p_name: self.apply_dns(ips, name))
+            card.pack_end(btn_set, False, False, 0)
+
+            self.dns_list_vbox.pack_start(card, False, False, 0)
+
+        self.dns_list_vbox.show_all()
+
+    def open_comm_test_view(self):
+        self.lbl_test_dns_active.set_markup(
+            f"<span font_size='8000' foreground='{self.pal['text_dim']}'>CURRENT ACTIVE DNS: <span foreground='{self.pal['accent']}'>{self.current_dns}</span> | INTERFACE: {self.active_dev or '--'}</span>"
+        )
+        self.stack.set_visible_child_name("comm_test")
+        self.ping_all_dns_servers()
+
+    def ping_all_dns_servers(self):
+        def _worker():
+            for p_id, p_name, p_ips, p_ping_ip, p_desc in DNS_PRESETS:
+                if not p_ping_ip:
+                    target = "1.1.1.1"
+                else:
+                    target = p_ping_ip
+
+                res = subprocess.run(["ping", "-c", "1", "-W", "1", target], capture_output=True, text=True).stdout
+                m = re.search(r"time=([0-9.]+)\s*ms", res)
+                rtt_str = f"{m.group(1)} ms" if m else "TIMEOUT"
+                
+                col = self.pal['green'] if m and float(m.group(1)) < 50 else (self.pal['yellow'] if m else self.pal['red'])
+
+                def _update_ui(pid=p_id, rtt=rtt_str, color=col):
+                    if pid in self.dns_ping_labels:
+                        self.dns_ping_labels[pid].set_markup(f"<span font_size='7500' foreground='{color}'>[ RTT: {rtt} ]</span>")
+
+                GLib.idle_add(_update_ui)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def run_comm_test(self):
+        if self.comm_testing:
+            return
+        self.comm_testing = True
+        self.btn_run_test.set_sensitive(False)
+        self.lbl_test_status.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['yellow']}'>🔄 COMM TEST IN PROGRESS: MEASURING PING &amp; BANDWIDTH...</span>")
+
+        def _worker():
+            # 1. Ping test
+            ping_out = subprocess.run(["ping", "-c", "4", "-W", "1", "1.1.1.1"], capture_output=True, text=True).stdout
+            m_rtt = re.search(r"min/avg/max/mdev\s*=\s*[0-9.]+/([0-9.]+)/", ping_out)
+            avg_rtt = m_rtt.group(1) if m_rtt else "--"
+            m_loss = re.search(r"([0-9]+)%\s*packet loss", ping_out)
+            loss_pct = m_loss.group(1) if m_loss else "0"
+
+            GLib.idle_add(lambda: self.lbl_test_results.set_markup(
+                f"<span font_size='8200' foreground='{self.pal['text_sub']}'>PING: <span foreground='{self.pal['accent']}'>{avg_rtt} ms</span> | LOSS: {loss_pct}% | MEASURING DOWNLOAD...</span>"
+            ))
+
+            # 2. Download speed test via Cloudflare CDN endpoint
+            down_speed_mbit = 0.0
+            try:
+                dl_out = subprocess.run(
+                    ["curl", "-s", "-w", "%{speed_download}", "-o", "/dev/null", "https://speed.cloudflare.com/__down?bytes=10000000"],
+                    capture_output=True, text=True, timeout=12
+                ).stdout.strip()
+                if dl_out and dl_out.isdigit():
+                    down_speed_mbit = (float(dl_out) * 8.0) / 1000000.0
+            except Exception:
+                pass
+
+            GLib.idle_add(lambda: self.lbl_test_results.set_markup(
+                f"<span font_size='8200' foreground='{self.pal['text_sub']}'>PING: <span foreground='{self.pal['accent']}'>{avg_rtt} ms</span> | LOSS: {loss_pct}% | DOWN: <span foreground='{self.pal['green']}'>{down_speed_mbit:.1f} Mbit/s</span> | MEASURING UPLOAD...</span>"
+            ))
+
+            # 3. Upload speed test
+            up_speed_mbit = 0.0
+            try:
+                ul_out = subprocess.run(
+                    ["curl", "-s", "-w", "%{speed_upload}", "-o", "/dev/null", "-X", "POST", "--data-binary", "@-", "https://speed.cloudflare.com/__up"],
+                    input=b"\x00" * 2000000, capture_output=True, text=False, timeout=12
+                ).stdout.decode('utf-8', errors='ignore').strip()
+                if ul_out and ul_out.isdigit():
+                    up_speed_mbit = (float(ul_out) * 8.0) / 1000000.0
+            except Exception:
+                pass
+
+            def _finish():
+                self.comm_testing = False
+                self.btn_run_test.set_sensitive(True)
+                self.lbl_test_status.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['green']}'>● COMM TEST COMPLETED // CARRIER VERIFIED NOMINAL</span>")
+                self.lbl_test_results.set_markup(
+                    f"<span font_size='8200' foreground='{self.pal['text_sub']}'>PING: <span foreground='{self.pal['accent']}'>{avg_rtt} ms</span> | LOSS: {loss_pct}% | DOWNLOAD: <span foreground='{self.pal['green']}'>{down_speed_mbit:.1f} Mbit/s</span> | UPLOAD: <span foreground='{self.pal['green']}'>{up_speed_mbit:.1f} Mbit/s</span></span>"
+                )
+                subprocess.run([
+                    "notify-send", "-t", "3500",
+                    "COMM DIAGNOSTIC COMPLETED",
+                    f"Ping: {avg_rtt}ms | Down: {down_speed_mbit:.1f} Mb/s | Up: {up_speed_mbit:.1f} Mb/s"
+                ])
+
+            GLib.idle_add(_finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def apply_dns(self, dns_ips, name):
+        if not self.active_ssid:
+            subprocess.run(["notify-send", "-t", "3000", "DNS ENGAGE FAILED", "No active connection link"])
+            return
+
+        def _worker():
+            if not dns_ips:
+                subprocess.run(["nmcli", "connection", "modify", self.active_ssid, "ipv4.dns", "", "ipv4.ignore-auto-dns", "no"])
+            else:
+                subprocess.run(["nmcli", "connection", "modify", self.active_ssid, "ipv4.dns", dns_ips, "ipv4.ignore-auto-dns", "yes"])
+
+            res = subprocess.run(["nmcli", "connection", "up", "id", self.active_ssid], capture_output=True, text=True)
+
+            def _done():
+                self.update_network_status()
+                if res.returncode == 0:
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        "GROUND STATION DNS ENGAGED",
+                        f"Active DNS Relay: {name}"
+                    ])
+                    self.lbl_test_dns_active.set_markup(
+                        f"<span font_size='8000' foreground='{self.pal['green']}'>ACTIVE DNS UPDATED // {name} ({dns_ips or 'DHCP'})</span>"
+                    )
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    subprocess.run([
+                        "notify-send", "-t", "4000",
+                        "DNS ENGAGE FAILED",
+                        f"{err}"
+                    ])
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def apply_custom_dns(self):
+        custom_ips = self.entry_custom_dns.get_text().strip()
+        if not custom_ips:
+            return
+        self.apply_dns(custom_ips, f"Custom ({custom_ips})")
+
+    def open_hidden_view(self):
+        self.entry_hidden_ssid.set_text("")
+        self.entry_hidden_pass.set_text("")
+        self.lbl_hidden_status.set_markup("")
+        self.stack.set_visible_child_name("hidden")
+        self.entry_hidden_ssid.grab_focus()
+
+    def open_vpn_view(self):
+        self.update_vpn_list()
+        self.stack.set_visible_child_name("vpn")
+
+    def open_bluetooth_view(self):
+        self.update_bluetooth_status()
+        self.stack.set_visible_child_name("bluetooth")
+
+    def submit_hidden_connect(self):
+        ssid = self.entry_hidden_ssid.get_text().strip()
+        passphrase = self.entry_hidden_pass.get_text().strip()
+        sec_type = self.combo_hidden_sec.get_active_id()
+
+        if not ssid:
+            self.lbl_hidden_status.set_markup(f"<span font_size='8000' foreground='{self.pal['red']}'>ERROR: SSID cannot be empty</span>")
+            return
+
+        if sec_type == "wpa" and not passphrase:
+            self.lbl_hidden_status.set_markup(f"<span font_size='8000' foreground='{self.pal['red']}'>ERROR: WPA passphrase required</span>")
+            return
+
+        self.lbl_hidden_status.set_markup(f"<span font_size='8000' foreground='{self.pal['yellow']}'>ENGAGING HIDDEN CARRIER LINK TO {ssid}...</span>")
+        self.btn_hidden_connect.set_sensitive(False)
+
+        def _worker():
+            if sec_type == "wpa":
+                cmd = ["nmcli", "dev", "wifi", "connect", ssid, "password", passphrase, "hidden", "yes"]
+            else:
+                cmd = ["nmcli", "dev", "wifi", "connect", ssid, "hidden", "yes"]
+
+            res = subprocess.run(cmd, capture_output=True, text=True)
+
+            def _done():
+                self.btn_hidden_connect.set_sensitive(True)
+                if res.returncode == 0:
+                    self.stack.set_visible_child_name("main")
+                    self.update_network_status()
+                    self.scan_wifi_networks()
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        "TELEMETRY UPLINK ESTABLISHED",
+                        f"Connected to hidden station: {ssid}"
+                    ])
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    self.lbl_hidden_status.set_markup(f"<span font_size='8000' foreground='{self.pal['red']}'>LINK FAILED: {err}</span>")
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def import_vpn_file_dialog(self):
+        dialog = Gtk.FileChooserDialog(
+            title="Import VPN Profile (.ovpn / .conf)",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+
+        filter_vpn = Gtk.FileFilter()
+        filter_vpn.set_name("VPN Configs (*.ovpn, *.conf)")
+        filter_vpn.add_pattern("*.ovpn")
+        filter_vpn.add_pattern("*.conf")
+        dialog.add_filter(filter_vpn)
+
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All Files")
+        filter_all.add_pattern("*")
+        dialog.add_filter(filter_all)
+
+        response = dialog.run()
+        file_path = dialog.get_filename() if response == Gtk.ResponseType.OK else None
+        dialog.destroy()
+
+        if file_path and os.path.exists(file_path):
+            self.do_import_vpn(file_path)
+
+    def do_import_vpn(self, file_path):
+        def _worker():
+            vpn_type = "openvpn" if file_path.endswith(".ovpn") else "wireguard"
+            res = subprocess.run(["nmcli", "connection", "import", "type", vpn_type, "file", file_path], capture_output=True, text=True)
+            
+            def _done():
+                if res.returncode == 0:
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        "VPN PROFILE IMPORTED",
+                        f"Successfully imported: {os.path.basename(file_path)}"
+                    ])
+                    self.update_vpn_list()
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    subprocess.run([
+                        "notify-send", "-t", "4000",
+                        "VPN IMPORT FAILED",
+                        f"{err}"
+                    ])
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def update_vpn_list(self):
+        def _fetch():
+            out = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE,UUID,DEVICE", "connection", "show"], capture_output=True, text=True).stdout
+            vpns = []
+            active_vpn_name = ""
+            for line in out.splitlines():
+                parts = line.strip().split(":")
+                if len(parts) >= 3:
+                    c_name, c_type, c_uuid = parts[0], parts[1], parts[2]
+                    c_dev = parts[3] if len(parts) > 3 else ""
+                    if any(vt in c_type.lower() for vt in ["vpn", "wireguard", "tun", "tap"]):
+                        is_act = bool(c_dev)
+                        if is_act:
+                            active_vpn_name = c_name
+                        vpns.append({
+                            "name": c_name,
+                            "type": c_type,
+                            "uuid": c_uuid,
+                            "active": is_act,
+                            "dev": c_dev
+                        })
+            return vpns, active_vpn_name
+
+        def _apply(res):
+            vpns, active_name = res
+            self.vpn_connections = vpns
+            self.active_vpn = active_name
+
+            if active_name:
+                self.lbl_vpn_active_status.set_markup(
+                    f"<span font_weight='bold' font_size='9500' foreground='{self.pal['green']}'>● SECURE TUNNEL ACTIVE // {active_name}</span>"
+                )
+                self.lbl_vpn_details.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_sub']}'>Encrypted telemetry routing enabled.</span>"
+                )
+            else:
+                self.lbl_vpn_active_status.set_markup(
+                    f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_dim']}'>○ NO ACTIVE SECURE TUNNEL</span>"
+                )
+                self.lbl_vpn_details.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Standard unencrypted carrier routing. Select a profile below.</span>"
+                )
+
+            for child in self.vpn_list_vbox.get_children():
+                self.vpn_list_vbox.remove(child)
+
+            if not vpns:
+                empty_lbl = Gtk.Label()
+                empty_lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>No VPN tunnel profiles configured yet.\nClick [ CREATE / EDIT VPN ] or [ IMPORT ] above to add.</span>")
+                empty_lbl.set_margin_top(20)
+                self.vpn_list_vbox.pack_start(empty_lbl, True, True, 0)
+            else:
+                for v in vpns:
+                    card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                    card.get_style_context().add_class("vpn-card")
+                    if v["active"]:
+                        card.get_style_context().add_class("active")
+
+                    v_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    card.pack_start(v_info, True, True, 0)
+
+                    v_title = Gtk.Label()
+                    v_title.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{v['name']}</span>")
+                    v_title.set_xalign(0.0)
+                    v_info.pack_start(v_title, False, False, 0)
+
+                    v_sub = Gtk.Label()
+                    v_sub.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>TYPE: {v['type'].upper()} | UUID: {v['uuid'][:8]}...</span>")
+                    v_sub.set_xalign(0.0)
+                    v_info.pack_start(v_sub, False, False, 0)
+
+                    if v["active"]:
+                        btn_act = Gtk.Button()
+                        btn_act.get_style_context().add_class("disconnect-btn")
+                        lbl_b = Gtk.Label()
+                        lbl_b.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['red']}'>DISENGAGE</span>")
+                        btn_act.add(lbl_b)
+                        btn_act.connect("clicked", lambda w, name=v['name']: self.toggle_vpn(name, False))
+                        card.pack_end(btn_act, False, False, 0)
+                    else:
+                        btn_act = Gtk.Button()
+                        btn_act.get_style_context().add_class("connect-btn")
+                        lbl_b = Gtk.Label()
+                        lbl_b.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>ENGAGE</span>")
+                        btn_act.add(lbl_b)
+                        btn_act.connect("clicked", lambda w, name=v['name']: self.toggle_vpn(name, True))
+                        card.pack_end(btn_act, False, False, 0)
+
+                    self.vpn_list_vbox.pack_start(card, False, False, 0)
+
+            self.vpn_list_vbox.show_all()
+
+        def _worker():
+            try:
+                res = _fetch()
+                GLib.idle_add(_apply, res)
+            except Exception as e:
+                print("Error updating VPN list:", e, file=sys.stderr)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def toggle_vpn(self, vpn_name, activate=True):
+        def _worker():
+            action = "up" if activate else "down"
+            res = subprocess.run(["nmcli", "connection", action, "id", vpn_name], capture_output=True, text=True)
+            def _done():
+                self.update_vpn_list()
+                self.update_network_status()
+                status_txt = "ENGAGED" if activate else "DISENGAGED"
+                if res.returncode == 0:
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        f"VPN TUNNEL {status_txt}",
+                        f"Secure tunnel: {vpn_name}"
+                    ])
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    subprocess.run([
+                        "notify-send", "-t", "4000",
+                        "VPN ACTION FAILED",
+                        f"{err}"
+                    ])
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # --- BLUETOOTH MANAGEMENT SUBSYSTEM ---
+    def update_bluetooth_status(self):
+        def _fetch():
+            show_out = subprocess.run(["bluetoothctl", "show"], capture_output=True, text=True).stdout
+            powered = ("Powered: yes" in show_out)
+            discovering = ("Discovering: yes" in show_out)
+            
+            ctrl_mac = ""
+            ctrl_name = ""
+            m_mac = re.search(r"Controller\s+([0-9A-Fa-f:]{17})", show_out)
+            if m_mac: ctrl_mac = m_mac.group(1)
+            m_name = re.search(r"Name:\s+(.+)", show_out)
+            if m_name: ctrl_name = m_name.group(1).strip()
+
+            devices_out = subprocess.run(["bluetoothctl", "devices"], capture_output=True, text=True).stdout
+            dev_list = []
+            connected_name = ""
+
+            for line in devices_out.splitlines():
+                parts = line.strip().split(" ", 2)
+                if len(parts) >= 3 and parts[0] == "Device":
+                    mac = parts[1]
+                    name = parts[2]
+                    info_out = subprocess.run(["bluetoothctl", "info", mac], capture_output=True, text=True).stdout
+                    connected = ("Connected: yes" in info_out)
+                    paired = ("Paired: yes" in info_out)
+                    trusted = ("Trusted: yes" in info_out)
+                    battery = None
+                    for iline in info_out.splitlines():
+                        if "Battery Percentage:" in iline:
+                            m_bat = re.search(r"\((\d+)\)", iline)
+                            if m_bat:
+                                battery = m_bat.group(1)
+                    if connected:
+                        connected_name = name
+                    dev_list.append({
+                        "mac": mac,
+                        "name": name,
+                        "connected": connected,
+                        "paired": paired,
+                        "trusted": trusted,
+                        "battery": battery
+                    })
+
+            dev_list.sort(key=lambda x: (not x["connected"], not x["paired"], x["name"]))
+            return {
+                "powered": powered,
+                "discovering": discovering,
+                "ctrl_mac": ctrl_mac,
+                "ctrl_name": ctrl_name,
+                "devices": dev_list,
+                "connected_name": connected_name
+            }
+
+        def _apply(res):
+            self.bt_powered = res["powered"]
+            self.bt_devices = res["devices"]
+            self.bt_connected_name = res["connected_name"]
+
+            # Update Button text
+            p_col = self.pal['green'] if self.bt_powered else self.pal['red']
+            p_txt = "ON" if self.bt_powered else "OFF"
+            self.lbl_bt_btn_pwr.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{p_col}'>[ POWER: {p_txt} ]</span>")
+
+            # Update Bluetooth Overview Card
+            if self.bt_powered:
+                self.lbl_bt_power_status.set_markup(
+                    f"<span font_weight='bold' font_size='9500' foreground='{self.pal['green']}'>● VHF BLUETOOTH RADIO POWERED // {res['ctrl_name']} ({res['ctrl_mac']})</span>"
+                )
+                if res["connected_name"]:
+                    self.lbl_bt_active_device.set_markup(
+                        f"<span font_size='8000' foreground='{self.pal['text_sub']}'>ACTIVE PERIPHERAL: <span foreground='{self.pal['accent']}'>{res['connected_name']}</span> (LINK ESTABLISHED)</span>"
+                    )
+                else:
+                    self.lbl_bt_active_device.set_markup(
+                        f"<span font_size='8000' foreground='{self.pal['text_dim']}'>NO ACTIVE PERIPHERAL LINK // {len(res['devices'])} DEVICES IN MEMORY</span>"
+                    )
+            else:
+                self.lbl_bt_power_status.set_markup(
+                    f"<span font_weight='bold' font_size='9500' foreground='{self.pal['red']}'>● VHF BLUETOOTH RADIO MUTED / POWERED OFF</span>"
+                )
+                self.lbl_bt_active_device.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Radio disabled. Press [ POWER: ON ] or 'P' to engage transceiver.</span>"
+                )
+
+            # Render Devices List
+            for child in self.bt_list_vbox.get_children():
+                self.bt_list_vbox.remove(child)
+
+            if not res["devices"]:
+                empty_lbl = Gtk.Label()
+                empty_lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>No paired or discovered Bluetooth devices found.\nClick [ SCAN DEVICES ] above to discover nearby peripherals.</span>")
+                empty_lbl.set_margin_top(20)
+                self.bt_list_vbox.pack_start(empty_lbl, True, True, 0)
+            else:
+                for d in res["devices"]:
+                    card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                    card.get_style_context().add_class("bt-card")
+                    if d["connected"]:
+                        card.get_style_context().add_class("active")
+
+                    d_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    card.pack_start(d_info, True, True, 0)
+
+                    title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                    d_title = Gtk.Label()
+                    d_title.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{d['name']}</span>")
+                    d_title.set_xalign(0.0)
+                    title_box.pack_start(d_title, False, False, 0)
+
+                    if d["connected"]:
+                        lbl_c_tag = Gtk.Label()
+                        lbl_c_tag.set_markup(f"<span font_weight='bold' font_size='7500' foreground='{self.pal['green']}'>[ CONNECTED ]</span>")
+                        title_box.pack_start(lbl_c_tag, False, False, 0)
+                    elif d["paired"]:
+                        lbl_p_tag = Gtk.Label()
+                        lbl_p_tag.set_markup(f"<span font_size='7500' foreground='{self.pal['accent']}'>[ PAIRED ]</span>")
+                        title_box.pack_start(lbl_p_tag, False, False, 0)
+
+                    d_info.pack_start(title_box, False, False, 0)
+
+                    bat_str = f" | BATTERY: {d['battery']}%" if d['battery'] else ""
+                    trusted_str = "TRUSTED" if d['trusted'] else "UNTRUSTED"
+                    d_sub = Gtk.Label()
+                    d_sub.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>MAC: {d['mac']} | {trusted_str}{bat_str}</span>")
+                    d_sub.set_xalign(0.0)
+                    d_info.pack_start(d_sub, False, False, 0)
+
+                    # Connect / Disconnect / Pair button
+                    if d["connected"]:
+                        btn_conn = Gtk.Button()
+                        btn_conn.get_style_context().add_class("disconnect-btn")
+                        lbl_cb = Gtk.Label()
+                        lbl_cb.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['red']}'>DISCONNECT</span>")
+                        btn_conn.add(lbl_cb)
+                        btn_conn.connect("clicked", lambda w, mac=d['mac']: self.disconnect_bt_device(mac))
+                        card.pack_end(btn_conn, False, False, 0)
+                    else:
+                        btn_conn = Gtk.Button()
+                        btn_conn.get_style_context().add_class("connect-btn")
+                        lbl_cb = Gtk.Label()
+                        btn_lbl_txt = "CONNECT" if d['paired'] else "PAIR &amp; CONNECT"
+                        lbl_cb.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>{btn_lbl_txt}</span>")
+                        btn_conn.add(lbl_cb)
+                        btn_conn.connect("clicked", lambda w, dev=d: self.connect_bt_device(dev))
+                        card.pack_end(btn_conn, False, False, 0)
+
+                    # Remove button if paired
+                    if d["paired"]:
+                        btn_rm = Gtk.Button()
+                        btn_rm.get_style_context().add_class("action-btn")
+                        lbl_rm = Gtk.Label()
+                        lbl_rm.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>UNPAIR</span>")
+                        btn_rm.add(lbl_rm)
+                        btn_rm.connect("clicked", lambda w, mac=d['mac']: self.remove_bt_device(mac))
+                        card.pack_end(btn_rm, False, False, 0)
+
+                    self.bt_list_vbox.pack_start(card, False, False, 0)
+
+            self.bt_list_vbox.show_all()
+
+        def _worker():
+            try:
+                res = _fetch()
+                GLib.idle_add(_apply, res)
+            except Exception as e:
+                print("Error updating bluetooth status:", e, file=sys.stderr)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return True
+
+    def toggle_bluetooth_power(self):
+        new_state = "off" if self.bt_powered else "on"
+        subprocess.run(["bluetoothctl", "power", new_state])
+        self.update_bluetooth_status()
+        self.update_network_status()
+
+    def toggle_bluetooth_pairable(self):
+        subprocess.run(["bluetoothctl", "pairable", "on"])
+        subprocess.run(["bluetoothctl", "discoverable", "on"])
+        subprocess.run([
+            "notify-send", "-t", "3000",
+            "BLUETOOTH PAIRABLE ENGAGED",
+            "Controller is now discoverable and pairable."
+        ])
+
+    def scan_bluetooth_devices(self):
+        if self.bt_scanning:
+            return
+        self.bt_scanning = True
+        self.lbl_bt_scan_status.set_markup(f"<span font_size='8000' foreground='{self.pal['yellow']}'>🔄 SCANNING ISM 2.4GHz FREQUENCIES...</span>")
+
+        def _worker():
+            subprocess.run(["bluetoothctl", "--timeout", "6", "scan", "on"], capture_output=True, text=True)
+            def _done():
+                self.bt_scanning = False
+                self.lbl_bt_scan_status.set_markup(f"<span font_size='8000' foreground='{self.pal['green']}'>[ DISCOVERY COMPLETE ]</span>")
+                self.update_bluetooth_status()
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def connect_bt_device(self, dev):
+        mac = dev["mac"]
+        def _worker():
+            if not dev["paired"]:
+                subprocess.run(["bluetoothctl", "pair", mac], capture_output=True, text=True)
+                subprocess.run(["bluetoothctl", "trust", mac], capture_output=True, text=True)
+            res = subprocess.run(["bluetoothctl", "connect", mac], capture_output=True, text=True)
+            def _done():
+                self.update_bluetooth_status()
+                if res.returncode == 0:
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        "BLUETOOTH LINK ESTABLISHED",
+                        f"Connected to peripheral: {dev['name']}"
+                    ])
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    subprocess.run([
+                        "notify-send", "-t", "4000",
+                        "BLUETOOTH LINK FAILED",
+                        f"Failed to connect to {dev['name']}: {err}"
+                    ])
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def disconnect_bt_device(self, mac):
+        def _worker():
+            subprocess.run(["bluetoothctl", "disconnect", mac], capture_output=True, text=True)
+            GLib.idle_add(lambda: self.update_bluetooth_status())
+            subprocess.run([
+                "notify-send", "-t", "3000",
+                "BLUETOOTH LINK DISENGAGED",
+                f"Disconnected peripheral: {mac}"
+            ])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def remove_bt_device(self, mac):
+        def _worker():
+            subprocess.run(["bluetoothctl", "remove", mac], capture_output=True, text=True)
+            GLib.idle_add(lambda: self.update_bluetooth_status())
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def launch_blueman(self):
+        try:
+            subprocess.Popen(["blueman-manager"], start_new_session=True)
+            self.close_window()
+        except Exception as e:
+            print("Error launching blueman-manager:", e, file=sys.stderr)
+
+    # --- NETWORK TELEMETRY ---
+    def update_network_status(self):
+        def _fetch():
+            radio_out = subprocess.run(["nmcli", "radio", "wifi"], capture_output=True, text=True).stdout.strip()
+            wifi_on = (radio_out.lower() == "enabled")
+
+            dev_out = subprocess.run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"], capture_output=True, text=True).stdout
+            active_conn = None
+            active_dev = None
+            active_type = None
+            active_vpn_name = None
+
+            for line in dev_out.splitlines():
+                parts = line.strip().split(":")
+                if len(parts) >= 4 and parts[2] == "connected" and parts[1] != "loopback":
+                    if any(vt in parts[1].lower() for vt in ["vpn", "wireguard", "tun", "tap"]):
+                        active_vpn_name = parts[3]
+                    elif not active_conn:
+                        active_dev = parts[0]
+                        active_type = parts[1]
+                        active_conn = parts[3]
+
+            ip_str = "0.0.0.0"
+            gw_str = "--"
+            dns_str = "--"
+            freq_str = "--"
+            rate_str = "--"
+            sig_pct = 0
+            eth_speed = ""
+
+            if active_dev:
+                detail_out = subprocess.run(["nmcli", "-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", active_dev], capture_output=True, text=True).stdout
+                for line in detail_out.splitlines():
+                    if line.startswith("IP4.ADDRESS"):
+                        ip_str = line.split(":", 1)[1].strip()
+                    elif line.startswith("IP4.GATEWAY"):
+                        gw_str = line.split(":", 1)[1].strip()
+                    elif line.startswith("IP4.DNS"):
+                        dns_str = line.split(":", 1)[1].strip()
+
+                if active_type in ["wifi", "802-11-wireless"]:
+                    wf_out = subprocess.run(["nmcli", "-t", "-f", "IN-USE,SSID,FREQ,RATE,SIGNAL,SECURITY", "device", "wifi"], capture_output=True, text=True).stdout
+                    for line in wf_out.splitlines():
+                        parts = line.strip().split(":")
+                        if parts[0] == "*":
+                            if len(parts) >= 5:
+                                freq_str = parts[2]
+                                rate_str = parts[3]
+                                if parts[4].isdigit():
+                                    sig_pct = int(parts[4])
+                            break
+                elif active_type in ["ethernet", "802-3-ethernet"]:
+                    speed_path = f"/sys/class/net/{active_dev}/speed"
+                    duplex_path = f"/sys/class/net/{active_dev}/duplex"
+                    speed_val = ""
+                    duplex_val = ""
+                    if os.path.exists(speed_path):
+                        try:
+                            with open(speed_path) as f: speed_val = f.read().strip()
+                        except Exception: pass
+                    if os.path.exists(duplex_path):
+                        try:
+                            with open(duplex_path) as f: duplex_val = f.read().strip().title()
+                        except Exception: pass
+                    
+                    if speed_val and speed_val.isdigit():
+                        eth_speed = f"{speed_val} Mbit/s"
+                        if duplex_val:
+                            eth_speed += f" ({duplex_val})"
+                    else:
+                        eth_speed = "Gigabit / Fast Ethernet"
+                    sig_pct = 100
+
+            conns_out = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE,UUID", "connection", "show"], capture_output=True, text=True).stdout
+            saved = {}
+            for line in conns_out.splitlines():
+                p = line.strip().split(":")
+                if len(p) >= 3:
+                    saved[p[0]] = {"type": p[1], "uuid": p[2]}
+
+            return {
+                "wifi_on": wifi_on,
+                "active_conn": active_conn,
+                "active_dev": active_dev,
+                "active_type": active_type,
+                "active_vpn": active_vpn_name,
+                "ip": ip_str,
+                "gw": gw_str,
+                "dns": dns_str,
+                "freq": freq_str,
+                "rate": rate_str,
+                "sig_pct": sig_pct,
+                "eth_speed": eth_speed,
+                "saved": saved
+            }
+
+        def _apply(res):
+            self.wifi_enabled = res["wifi_on"]
+            self.active_ssid = res["active_conn"] or ""
+            self.active_dev = res["active_dev"] or ""
+            self.active_type = res["active_type"] or ""
+            self.active_vpn = res["active_vpn"] or ""
+            self.current_dns = res["dns"] or "--"
+            self.saved_connections = res["saved"]
+
+            r_col = self.pal['green'] if self.wifi_enabled else self.pal['red']
+            r_txt = "ON" if self.wifi_enabled else "OFF"
+            self.lbl_btn_radio.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{r_col}'>[ RADIO: {r_txt} ]</span>")
+
+            vpn_tag = f" <span foreground='{self.pal['green']}'>[ VPN: {self.active_vpn} ]</span>" if self.active_vpn else ""
+            bt_tag = f" | <span foreground='{self.pal['accent']}'>BT: {self.bt_connected_name}</span>" if self.bt_connected_name else (f" | <span foreground='{self.pal['text_dim']}'>BT: ON</span>" if self.bt_powered else "")
+
+            is_wired = (res["active_type"] in ["ethernet", "802-3-ethernet"])
+
+            if is_wired:
+                self.rf_gauge.set_signal(100, connected=True, status="UMBILICAL HARDWIRE", mode="ethernet", readout_override=res["eth_speed"])
+                self.lbl_link_status.set_markup(
+                    f"<span font_weight='bold' font_size='9500' foreground='{self.pal['green']}'>● ETHERNET UMBILICAL LINK ACTIVE // {res['active_conn']}</span>{vpn_tag}"
+                )
+                self.lbl_link_ip.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_sub']}'>IP: <span foreground='{self.pal['accent']}'>{res['ip']}</span> | GW: {res['gw']} | DNS: {res['dns']}</span>"
+                )
+                self.lbl_link_rf.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_dim']}'>INTERFACE: {res['active_dev']} ({res['eth_speed']}) | HARDWIRE TELEMETRY{bt_tag}</span>"
+                )
+            elif not self.wifi_enabled and not res["active_conn"]:
+                self.rf_gauge.set_signal(0, connected=False, status="RADIO SILENCE", mode="wifi")
+                self.lbl_link_status.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['red']}'>● CARRIER LINK: RADIO MUTED / DISABLED</span>{vpn_tag}")
+                self.lbl_link_ip.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Uplink offline. Enable radio with [ RADIO ] or 'W'.{bt_tag}</span>")
+                self.lbl_link_rf.set_markup("")
+            elif res["active_conn"]:
+                status_txt = "NOMINAL UPLINK" if res["sig_pct"] >= 50 else "FAIR CARRIER"
+                self.rf_gauge.set_signal(res["sig_pct"], connected=True, status=status_txt, mode="wifi")
+                
+                self.lbl_link_status.set_markup(
+                    f"<span font_weight='bold' font_size='9500' foreground='{self.pal['green']}'>● WIFI RF LINK ACTIVE // {res['active_conn']}</span>{vpn_tag}"
+                )
+                self.lbl_link_ip.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_sub']}'>IP: <span foreground='{self.pal['accent']}'>{res['ip']}</span> | GW: {res['gw']} | DNS: {res['dns']}</span>"
+                )
+                self.lbl_link_rf.set_markup(
+                    f"<span font_size='8000' foreground='{self.pal['text_dim']}'>BAND: {res['freq']} | RATE: {res['rate']} | DEV: {res['active_dev']}{bt_tag}</span>"
+                )
+            else:
+                self.rf_gauge.set_signal(0, connected=False, status="SEARCHING", mode="wifi")
+                self.lbl_link_status.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['yellow']}'>○ UPLINK DISCONNECTED // SCANNING CARRIER</span>{vpn_tag}")
+                self.lbl_link_ip.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>No active station link. Select an access point below.{bt_tag}</span>")
+                self.lbl_link_rf.set_markup("")
+
+            return False
+
+        def _worker():
+            try:
+                res = _fetch()
+                GLib.idle_add(_apply, res)
+            except Exception as e:
+                print("Error fetching network status:", e, file=sys.stderr)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return True
+
+    def scan_wifi_networks(self, force_rescan=False):
+        if self.is_scanning:
+            return
+        self.is_scanning = True
+        self.lbl_scan_status.set_markup(f"<span font_size='8000' foreground='{self.pal['yellow']}'>🔄 SCANNING S-BAND FREQUENCIES...</span>")
+
+        def _worker():
+            cmd = ["nmcli", "-t", "-f", "ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,BARS,SECURITY", "dev", "wifi", "list"]
+            if force_rescan:
+                cmd.extend(["--rescan", "yes"])
+            else:
+                cmd.extend(["--rescan", "auto"])
+
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True).stdout
+                networks = []
+                seen_ssids = set()
+
+                for line in out.splitlines():
+                    parts = line.strip().split(":")
+                    if len(parts) >= 9:
+                        active = (parts[0] == "yes")
+                        ssid = parts[1]
+                        bssid = parts[2]
+                        chan = parts[3]
+                        freq = parts[4]
+                        rate = parts[5]
+                        signal_pct = int(parts[6]) if parts[6].isdigit() else 0
+                        bars = parts[7]
+                        security = parts[8]
+
+                        if not ssid:
+                            continue
+
+                        if ssid in seen_ssids:
+                            continue
+                        seen_ssids.add(ssid)
+
+                        networks.append({
+                            "active": active,
+                            "ssid": ssid,
+                            "bssid": bssid,
+                            "chan": chan,
+                            "freq": freq,
+                            "rate": rate,
+                            "signal": signal_pct,
+                            "bars": bars,
+                            "security": security
+                        })
+
+                networks.sort(key=lambda x: (not x["active"], -x["signal"]))
+                GLib.idle_add(self._render_stations_list, networks)
+            except Exception as e:
+                print("Error scanning wifi:", e, file=sys.stderr)
+                GLib.idle_add(lambda: self.lbl_scan_status.set_markup(f"<span font_size='8000' foreground='{self.pal['red']}'>SCAN FAILED</span>"))
+            finally:
+                self.is_scanning = False
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _render_stations_list(self, networks):
+        self.stations = networks
+        self.lbl_scan_status.set_markup(f"<span font_size='8000' foreground='{self.pal['green']}'>[ {len(networks)} STATIONS DISCOVERED ]</span>")
+
+        for child in self.stations_vbox.get_children():
+            self.stations_vbox.remove(child)
+
+        self.station_widgets = []
+
+        if not networks:
+            empty_lbl = Gtk.Label()
+            empty_lbl.set_markup(f"<span font_size='9000' foreground='{self.pal['text_dim']}'>No wireless carrier stations detected in range.</span>")
+            empty_lbl.set_margin_top(20)
+            self.stations_vbox.pack_start(empty_lbl, True, True, 0)
+            self.stations_vbox.show_all()
+            return
+
+        for idx, net in enumerate(networks):
+            card = Gtk.EventBox()
+            card.get_style_context().add_class("station-card")
+            if net["active"]:
+                card.get_style_context().add_class("active")
+
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            card.add(hbox)
+
+            s_unit, dbm, s_idx = pct_to_smeter(net['signal'])
+            sig_lbl = Gtk.Label()
+            sig_col = self.pal['green'] if s_idx >= 7 else (self.pal['yellow'] if s_idx >= 4 else self.pal['red'])
+            sec_icon = "🔒" if net['security'] else "🔓"
+            sig_lbl.set_markup(f"<span font_size='9500' foreground='{sig_col}'>{net['bars']}</span> <span font_size='8000'>{sec_icon}</span>")
+            hbox.pack_start(sig_lbl, False, False, 0)
+
+            details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            hbox.pack_start(details, True, True, 0)
+
+            title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            lbl_ssid = Gtk.Label()
+            is_saved = (net['ssid'] in self.saved_connections)
+            saved_tag = f" <span font_size='7000' foreground='{self.pal['accent']}'>[KNOWN]</span>" if is_saved else ""
+            lbl_ssid.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{net['ssid']}</span>{saved_tag}")
+            lbl_ssid.set_xalign(0.0)
+            title_box.pack_start(lbl_ssid, False, False, 0)
+
+            if net['active']:
+                lbl_act = Gtk.Label()
+                lbl_act.set_markup(f"<span font_weight='bold' font_size='7500' foreground='{self.pal['green']}'>[ ACTIVE LINK ]</span>")
+                title_box.pack_start(lbl_act, False, False, 0)
+
+            details.pack_start(title_box, False, False, 0)
+
+            sub_info = Gtk.Label()
+            sec_desc = net['security'] if net['security'] else "OPEN / UNENCRYPTED"
+            sub_info.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>{net['freq']} | CH {net['chan']} | <span foreground='{sig_col}' font_weight='bold'>{s_unit}</span> ({dbm} dBm) [{net['rate']}] | {sec_desc}</span>")
+            sub_info.set_xalign(0.0)
+            details.pack_start(sub_info, False, False, 0)
+
+            if net['active']:
+                btn_action = Gtk.Button()
+                btn_action.get_style_context().add_class("disconnect-btn")
+                lbl_btn = Gtk.Label()
+                lbl_btn.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['red']}'>DISCONNECT</span>")
+                btn_action.add(lbl_btn)
+                btn_action.connect("clicked", lambda w, ssid=net['ssid']: self.disconnect_wifi(ssid))
+                hbox.pack_end(btn_action, False, False, 0)
+            else:
+                btn_action = Gtk.Button()
+                btn_action.get_style_context().add_class("connect-btn")
+                lbl_btn = Gtk.Label()
+                btn_txt = "CONNECT" if is_saved or not net['security'] else "AUTH &amp; CONNECT"
+                lbl_btn.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>{btn_txt}</span>")
+                btn_action.add(lbl_btn)
+                btn_action.connect("clicked", lambda w, n=net: self.initiate_connect(n))
+                hbox.pack_end(btn_action, False, False, 0)
+
+            card.connect("button-press-event", lambda w, e, i=idx: self.select_station_index(i))
+            self.station_widgets.append(card)
+            self.stations_vbox.pack_start(card, False, False, 0)
+
+        self.stations_vbox.show_all()
+        self.update_selection_highlight()
+
+    def update_selection_highlight(self):
+        for i, card in enumerate(self.station_widgets):
+            ctx = card.get_style_context()
+            if i == self.selected_station_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def select_station_index(self, idx):
+        if 0 <= idx < len(self.station_widgets):
+            self.selected_station_idx = idx
+            self.update_selection_highlight()
+
+    def toggle_radio(self, widget=None):
+        new_state = "off" if self.wifi_enabled else "on"
+        subprocess.run(["nmcli", "radio", "wifi", new_state])
+        self.update_network_status()
+        if new_state == "on":
+            self.scan_wifi_networks(force_rescan=True)
+
+    def launch_nm_editor(self, widget=None):
+        try:
+            subprocess.Popen(["nm-connection-editor"], start_new_session=True)
+            self.close_window()
+        except Exception as e:
+            print("Error launching nm-connection-editor:", e, file=sys.stderr)
+
+    def initiate_connect(self, net):
+        ssid = net["ssid"]
+        is_saved = (ssid in self.saved_connections)
+        is_secure = bool(net["security"])
+
+        if is_saved or not is_secure:
+            self.connect_wifi_direct(ssid)
+        else:
+            self.show_auth_prompt(net)
+
+    def show_auth_prompt(self, net):
+        self.connecting_ssid = net["ssid"]
+        self.lbl_auth_target.set_markup(
+            f"<span font_weight='bold' font_size='11000' foreground='{self.pal['accent']}'>TARGET: {net['ssid']}</span>\n"
+            f"<span font_size='8000' foreground='{self.pal['text_dim']}'>SECURITY: {net['security']} | BAND: {net['freq']}</span>"
+        )
+        self.entry_pass.set_text("")
+        self.lbl_auth_status.set_markup("")
+        self.stack.set_visible_child_name("auth")
+        self.entry_pass.grab_focus()
+
+    def cancel_auth(self):
+        self.connecting_ssid = None
+        self.stack.set_visible_child_name("main")
+
+    def submit_auth(self):
+        passphrase = self.entry_pass.get_text().strip()
+        if not passphrase:
+            self.lbl_auth_status.set_markup(f"<span font_size='8500' foreground='{self.pal['red']}'>ERROR: Passphrase cannot be empty</span>")
+            return
+
+        ssid = self.connecting_ssid
+        self.lbl_auth_status.set_markup(f"<span font_size='8500' foreground='{self.pal['yellow']}'>ENGAGING CARRIER LINK TO {ssid}...</span>")
+        self.btn_auth_connect.set_sensitive(False)
+
+        def _worker():
+            res = subprocess.run(["nmcli", "dev", "wifi", "connect", ssid, "password", passphrase], capture_output=True, text=True)
+            
+            def _done():
+                self.btn_auth_connect.set_sensitive(True)
+                if res.returncode == 0:
+                    self.cancel_auth()
+                    self.update_network_status()
+                    self.scan_wifi_networks()
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        "TELEMETRY UPLINK ESTABLISHED",
+                        f"Connected to carrier station: {ssid}"
+                    ])
+                else:
+                    err_msg = res.stderr.strip() or res.stdout.strip() or "Carrier lock failed"
+                    self.lbl_auth_status.set_markup(f"<span font_size='8000' foreground='{self.pal['red']}'>AUTHENTICATION REJECTED: {err_msg}</span>")
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def connect_wifi_direct(self, ssid):
+        self.lbl_scan_status.set_markup(f"<span font_size='8000' foreground='{self.pal['yellow']}'>ENGAGING LINK TO {ssid}...</span>")
+        
+        def _worker():
+            if ssid in self.saved_connections:
+                res = subprocess.run(["nmcli", "connection", "up", "id", ssid], capture_output=True, text=True)
+            else:
+                res = subprocess.run(["nmcli", "dev", "wifi", "connect", ssid], capture_output=True, text=True)
+
+            def _done():
+                self.update_network_status()
+                self.scan_wifi_networks()
+                if res.returncode == 0:
+                    subprocess.run([
+                        "notify-send", "-t", "3500",
+                        "TELEMETRY UPLINK ESTABLISHED",
+                        f"Connected to carrier station: {ssid}"
+                    ])
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    subprocess.run([
+                        "notify-send", "-t", "4000",
+                        "TELEMETRY UPLINK FAILED",
+                        f"Failed to connect to {ssid}: {err}"
+                    ])
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def disconnect_wifi(self, ssid):
+        def _worker():
+            subprocess.run(["nmcli", "connection", "down", "id", ssid])
+            GLib.idle_add(lambda: (self.update_network_status(), self.scan_wifi_networks()))
+            subprocess.run([
+                "notify-send", "-t", "3000",
+                "TELEMETRY UPLINK DISENGAGED",
+                f"Disconnected from station: {ssid}"
+            ])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def on_key_press(self, widget, event):
+        keyname = Gdk.keyval_name(event.keyval)
+        curr_view = self.stack.get_visible_child_name()
+
+        if curr_view in ["auth", "hidden", "vpn", "bluetooth", "comm_test"]:
+            if keyname in ["Escape"]:
+                self.stack.set_visible_child_name("main")
+                return True
+            if curr_view == "bluetooth":
+                if keyname in ["p", "P"]:
+                    self.toggle_bluetooth_power()
+                    return True
+                elif keyname in ["s", "S"]:
+                    self.scan_bluetooth_devices()
+                    return True
+            elif curr_view == "comm_test":
+                if keyname in ["r", "R"]:
+                    self.run_comm_test()
+                    return True
+                elif keyname in ["p", "P"]:
+                    self.ping_all_dns_servers()
+                    return True
+            return False
+
+        if keyname in ["Escape", "q", "Q"]:
+            self.close_window()
+            return True
+        elif keyname in ["w", "W"]:
+            self.toggle_radio()
+            return True
+        elif keyname in ["h", "H"]:
+            self.open_hidden_view()
+            return True
+        elif keyname in ["v", "V"]:
+            self.open_vpn_view()
+            return True
+        elif keyname in ["b", "B"]:
+            self.open_bluetooth_view()
+            return True
+        elif keyname in ["t", "T", "c", "C"]:
+            self.open_comm_test_view()
+            return True
+        elif keyname in ["r", "R"]:
+            self.scan_wifi_networks(force_rescan=True)
+            return True
+        elif keyname in ["e", "E"]:
+            self.launch_nm_editor()
+            return True
+        elif keyname in ["Down", "j", "J"]:
+            if self.stations:
+                self.select_station_index((self.selected_station_idx + 1) % len(self.stations))
+            return True
+        elif keyname in ["Up", "k", "K"]:
+            if self.stations:
+                self.select_station_index((self.selected_station_idx - 1 + len(self.stations)) % len(self.stations))
+            return True
+        elif keyname in ["Return", "KP_Enter"]:
+            if self.stations and 0 <= self.selected_station_idx < len(self.stations):
+                net = self.stations[self.selected_station_idx]
+                if net["active"]:
+                    self.disconnect_wifi(net["ssid"])
+                else:
+                    self.initiate_connect(net)
+            return True
+
+        return False
+
+    def close_window(self):
+        cleanup()
+        self.hide()
+        Gtk.main_quit()
+
+def main():
+    check_singleton()
+    win = SpaceNetworkDialog()
+    win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

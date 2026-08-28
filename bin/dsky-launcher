@@ -1,0 +1,996 @@
+#!/usr/bin/env python3
+"""
+Apollo Guidance Computer (DSKY) Application Launcher for Hyprland
+- Symmetrical Top DSKY Panel: Annunciators (2x4) on Left, Proportional AGC Console (2x2) on Right
+- Middle: Search Bar
+- Bottom: Categorized Monospace App List
+- High-contrast, clean typography, zero text-shadows, dynamic live theme sync
+"""
+import sys, os, subprocess, configparser, re, signal
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+
+HAS_LAYER_SHELL = False
+try:
+    gi.require_version('GtkLayerShell', '0.1')
+    from gi.repository import GtkLayerShell
+    HAS_LAYER_SHELL = True
+except Exception:
+    HAS_LAYER_SHELL = False
+
+from gi.repository import Gtk, Gdk, GLib, Pango
+
+try:
+    from gi.repository import GLibUnix
+    HAVE_GLIB_UNIX = True
+except Exception:
+    HAVE_GLIB_UNIX = False
+
+# ----------------- PALETTES & THEMES -----------------
+THEMES = {
+    "nasa": {
+        "bg_chassis": "#0a0d12",
+        "bg_panel": "#12161f",
+        "bg_input": "#06080b",
+        "bg_list": "#0d1017",
+        "bg_selected": "#241e0c",
+        "accent": "#ffb000",
+        "accent_dim": "#8c6200",
+        "text_primary": "#ffb000",
+        "text_secondary": "#c89220",
+        "text_dim": "#705a28",
+        "annunciator_idle_bg": "#151a24",
+        "annunciator_idle_fg": "#7a8a9e",
+        "annunciator_active_bg": "#ffb000",
+        "annunciator_active_fg": "#0a0d12",
+        "comp_acty": "#2ef788",
+        "border_color": "#ffb000",
+        "border_dim": "#263040",
+        "radius": "3px",
+        "shadow": "0 0 16px rgba(0, 0, 0, 0.95)",
+    },
+    "crt-amber": {
+        "bg_chassis": "#060709",
+        "bg_panel": "#0e1014",
+        "bg_input": "#030405",
+        "bg_list": "#090b0e",
+        "bg_selected": "#261908",
+        "accent": "#ff9e00",
+        "accent_dim": "#7a4c00",
+        "text_primary": "#ff9e00",
+        "text_secondary": "#c77c00",
+        "text_dim": "#734900",
+        "annunciator_idle_bg": "#14120e",
+        "annunciator_idle_fg": "#735730",
+        "annunciator_active_bg": "#ff9e00",
+        "annunciator_active_fg": "#060709",
+        "comp_acty": "#ff9e00",
+        "border_color": "#ff9e00",
+        "border_dim": "#402800",
+        "radius": "0px",
+        "shadow": "0 0 16px rgba(255, 158, 0, 0.35)",
+    },
+    "crt-green": {
+        "bg_chassis": "#040704",
+        "bg_panel": "#0a100a",
+        "bg_input": "#020502",
+        "bg_list": "#070c07",
+        "bg_selected": "#102610",
+        "accent": "#33ff33",
+        "accent_dim": "#156615",
+        "text_primary": "#33ff33",
+        "text_secondary": "#28cc28",
+        "text_dim": "#186618",
+        "annunciator_idle_bg": "#0c170c",
+        "annunciator_idle_fg": "#3b7a3b",
+        "annunciator_active_bg": "#33ff33",
+        "annunciator_active_fg": "#040704",
+        "comp_acty": "#33ff33",
+        "border_color": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "radius": "0px",
+        "shadow": "0 0 16px rgba(51, 255, 51, 0.35)",
+    },
+    "kosmos-vfd": {
+        "bg_chassis": "#07100e",
+        "bg_panel": "#0e1e1a",
+        "bg_input": "#040b09",
+        "bg_list": "#0a1714",
+        "bg_selected": "#173830",
+        "accent": "#48e5c2",
+        "accent_dim": "#1f6656",
+        "text_primary": "#48e5c2",
+        "text_secondary": "#36b89c",
+        "text_dim": "#226b5c",
+        "annunciator_idle_bg": "#122622",
+        "annunciator_idle_fg": "#428577",
+        "annunciator_active_bg": "#48e5c2",
+        "annunciator_active_fg": "#07100e",
+        "comp_acty": "#48e5c2",
+        "border_color": "#48e5c2",
+        "border_dim": "#183d34",
+        "radius": "2px",
+        "shadow": "0 0 16px rgba(72, 229, 194, 0.35)",
+    }
+}
+
+# 2 Columns x 4 Rows of Category Annunciators
+CATEGORIES_GRID = [
+    [("ALL", "00", "ALL APPS"),    ("Internet", "04", "INTERNET")],
+    [("Development", "01", "DEV / CODE"),  ("Multimedia", "05", "MEDIA")],
+    [("Settings", "02", "SETTINGS"),    ("Office", "06", "DOCS / TXT")],
+    [("System", "03", "SYSTEM"),        ("Utilities", "07", "UTILITY")],
+]
+
+# Standard XDG category mappings (exact token match against desktop Categories)
+XDG_CATEGORY_MAP = {
+    # Scanner & Printing -> Utilities
+    "scanning": "Utilities",
+    "scanner": "Utilities",
+    "scan": "Utilities",
+    "printing": "Utilities",
+    "printer": "Utilities",
+    "print": "Utilities",
+
+    # Multimedia (Media)
+    "audiovideo": "Multimedia",
+    "audio": "Multimedia",
+    "video": "Multimedia",
+    "graphics": "Multimedia",
+    "photography": "Multimedia",
+    "music": "Multimedia",
+    "player": "Multimedia",
+    "recorder": "Multimedia",
+    "sequencer": "Multimedia",
+    "midi": "Multimedia",
+    "mixer": "Multimedia",
+    "2dgraphics": "Multimedia",
+    "vectorgraphics": "Multimedia",
+    "rastergraphics": "Multimedia",
+    "tv": "Multimedia",
+    "audiovideoediting": "Multimedia",
+    
+    # Development (Dev / Code)
+    "development": "Development",
+    "ide": "Development",
+    "programming": "Development",
+    "texteditor": "Development",
+    "debugger": "Development",
+    "building": "Development",
+    "guidesigner": "Development",
+    "profiling": "Development",
+    "revisioncontrol": "Development",
+    "translation": "Development",
+    "webdevelopment": "Development",
+    
+    # Internet (Internet & Network)
+    "network": "Internet",
+    "webbrowser": "Internet",
+    "email": "Internet",
+    "chat": "Internet",
+    "instantmessaging": "Internet",
+    "feed": "Internet",
+    "filetransfer": "Internet",
+    "ircclient": "Internet",
+    "news": "Internet",
+    "p2p": "Internet",
+    "remoteaccess": "Internet",
+    "telephony": "Internet",
+    "videoconference": "Internet",
+    "hamradio": "Internet",
+    
+    # Office (Docs / Txt)
+    "office": "Office",
+    "wordprocessor": "Office",
+    "spreadsheet": "Office",
+    "presentation": "Office",
+    "database": "Office",
+    "dictionary": "Office",
+    "chart": "Office",
+    "finance": "Office",
+    "flowchart": "Office",
+    "publishing": "Office",
+    "projectmanagement": "Office",
+    
+    # Settings (Settings & Config)
+    "settings": "Settings",
+    "desktopsettings": "Settings",
+    "hardwaresettings": "Settings",
+    "preferences": "Settings",
+    "security": "Settings",
+    "accessibility": "Settings",
+    
+    # System (System & Terminals)
+    "system": "System",
+    "terminalemulator": "System",
+    "filemanager": "System",
+    "monitor": "System",
+    "emulator": "System",
+    "core": "System",
+    "packagemanager": "System",
+    
+    # Utilities (Utility)
+    "utility": "Utilities",
+    "utilities": "Utilities",
+    "archiving": "Utilities",
+    "calculator": "Utilities",
+    "clock": "Utilities",
+    "compression": "Utilities",
+    "filetools": "Utilities",
+    "viewer": "Utilities",
+    "maps": "Utilities",
+}
+
+SCAN_PRINT_PATTERN = r"\b(scan|scanner|scanning|simple-scan|hp-uiscan|print|printer|printing|cups|system-config-printer|hp-toolbox)\b"
+
+APP_KEYWORD_RULES = [
+    (SCAN_PRINT_PATTERN, "Utilities"),
+    (r"\b(screensaver|space-screensaver|space-screensaver-config)\b", "Utilities"),
+    (r"\b(iss|spaceera-iss|space-iss-dialog|iss-tracker)\b", "Utilities"),
+    (r"\b(spotify|vlc|mpv|audacity|gimp|inkscape|blender|kdenlive|obs|handbrake|rhythmbox|cider|mixxx|pavucontrol|sound|audio|player)\b", "Multimedia"),
+    (r"\b(firefox|chromium|chrome|brave|zen|vivaldi|thunderbird|discord|slack|telegram|signal|betterbird|browser)\b", "Internet"),
+    (r"\b(nvim|vim|code|vscodium|sublime|emacs|eclipse|pycharm|intellij|clion|rustrover|git|debugger|compiler|designer)\b", "Development"),
+    (r"\b(obsidian|notion|libreoffice|soffice|calc|writer|impress|draw|math|word|excel|powerpoint)\b", "Office"),
+    (r"\b(htop|btop|kitty|ghostty|alacritty|foot|wezterm|dolphin|thunar|nautilus|gparted|system-monitor)\b", "System"),
+    (r"\b(settings|control-center|tweaks|config|pavucontrol-qt)\b", "Settings"),
+]
+
+CATEGORY_PRIORITY = ["Development", "Office", "Multimedia", "Internet", "Settings", "System", "Utilities"]
+
+def get_current_theme():
+    theme_file = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.isfile(theme_file):
+        try:
+            with open(theme_file, "r") as f:
+                theme = f.read().strip()
+                if theme in THEMES:
+                    return theme
+        except Exception:
+            pass
+    return "nasa"
+
+def get_all_apps():
+    search_dirs = [
+        "/usr/share/applications",
+        os.path.expanduser("~/.local/share/applications"),
+        "/var/lib/flatpak/exports/share/applications",
+        os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+    ]
+    seen_execs = set()
+    apps = []
+
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for root, _, files in os.walk(d):
+            for file in files:
+                if not file.endswith(".desktop"):
+                    continue
+                path = os.path.join(root, file)
+                cp = configparser.RawConfigParser(strict=False)
+                try:
+                    cp.read(path, encoding="utf-8")
+                    if not cp.has_section("Desktop Entry"):
+                        continue
+                    if cp.getboolean("Desktop Entry", "NoDisplay", fallback=False):
+                        continue
+                    if cp.getboolean("Desktop Entry", "Hidden", fallback=False):
+                        continue
+                    
+                    name = cp.get("Desktop Entry", "Name", fallback=None)
+                    exec_cmd = cp.get("Desktop Entry", "Exec", fallback=None)
+                    if not name or not exec_cmd:
+                        continue
+                    
+                    clean_exec = re.sub(r"%[a-zA-Z]", "", exec_cmd).strip()
+                    if clean_exec in seen_execs:
+                        continue
+                    seen_execs.add(clean_exec)
+                    
+                    comment = cp.get("Desktop Entry", "Comment", fallback="")
+                    raw_cats = [c.strip() for c in cp.get("Desktop Entry", "Categories", fallback="").split(";") if c.strip()]
+                    generic = cp.get("Desktop Entry", "GenericName", fallback="")
+                    
+                    assigned_cat = None
+                    cats_str = " ".join(raw_cats)
+                    search_str = f"{name} {clean_exec} {comment} {generic} {cats_str}".lower()
+                    
+                    # 1. Scanner & Printer priority routing to Utilities
+                    if re.search(SCAN_PRINT_PATTERN, search_str):
+                        assigned_cat = "Utilities"
+                    
+                    # 2. Exact XDG category token matching
+                    if not assigned_cat:
+                        found_cats = set()
+                        for c in raw_cats:
+                            low_c = c.lower()
+                            if low_c in XDG_CATEGORY_MAP:
+                                found_cats.add(XDG_CATEGORY_MAP[low_c])
+                        
+                        for p_cat in CATEGORY_PRIORITY:
+                            if p_cat in found_cats:
+                                assigned_cat = p_cat
+                                break
+                    
+                    # 3. Word-boundary regex rules on name, exec, comment, and generic name
+                    if not assigned_cat:
+                        for pattern, cat in APP_KEYWORD_RULES:
+                            if re.search(pattern, search_str):
+                                assigned_cat = cat
+                                break
+                    
+                    # 4. Default fallback
+                    if not assigned_cat:
+                        assigned_cat = "Utilities"
+                    
+                    apps.append({
+                        "name": name,
+                        "generic": generic,
+                        "comment": comment,
+                        "exec": clean_exec,
+                        "category": assigned_cat,
+                        "path": path,
+                    })
+                except Exception:
+                    continue
+    
+    apps.sort(key=lambda x: x["name"].lower())
+    return apps
+
+class DskyLauncher(Gtk.Window):
+    def __init__(self):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.theme_name = get_current_theme()
+        self.t = THEMES[self.theme_name]
+        self.apps = get_all_apps()
+        self.active_category = "ALL"
+        self.filtered_apps = []
+        self.selected_index = 0
+        self.css_provider = None
+        
+        self.set_title("Apollo AGC DSKY Launcher")
+        self.set_default_size(560, 520)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        
+        if HAS_LAYER_SHELL:
+            GtkLayerShell.init_for_window(self)
+            GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+            try:
+                GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.ON_DEMAND)
+            except Exception:
+                GtkLayerShell.set_keyboard_interactivity(self, True)
+            GtkLayerShell.set_namespace(self, "dsky-launcher")
+        
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+        self.connect("focus-out-event", lambda w, e: self.close_launcher())
+        
+        if HAVE_GLIB_UNIX:
+            GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.on_sigusr1)
+        else:
+            try:
+                GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.on_sigusr1)
+            except Exception:
+                pass
+        
+        self.comp_acty_state = True
+        GLib.timeout_add(500, self.on_blink_comp_acty)
+        
+        self.filter_apps()
+
+    def on_blink_comp_acty(self):
+        self.comp_acty_state = not self.comp_acty_state
+        if hasattr(self, 'comp_box') and self.comp_box:
+            if self.comp_acty_state:
+                self.comp_box.get_style_context().add_class("active")
+            else:
+                self.comp_box.get_style_context().remove_class("active")
+        return True
+
+    def on_sigusr1(self):
+        self.reload_theme()
+        return True
+
+    def reload_theme(self):
+        self.theme_name = get_current_theme()
+        self.t = THEMES[self.theme_name]
+        self.apply_css()
+        self.render_list()
+
+    def apply_css(self):
+        t = self.t
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', 'IBM Plex Mono', monospace;
+            background-image: none;
+            outline: none;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        window,
+        #main-window,
+        #chassis-frame {{
+            background-color: {t['bg_chassis']};
+            color: {t['text_primary']};
+        }}
+        #chassis-frame {{
+            border: 2px solid {t['border_color']};
+            border-radius: {t['radius']};
+            padding: 12px;
+            box-shadow: {t['shadow']};
+        }}
+        .dsky-top-panel {{
+            background-color: {t['bg_panel']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 8px 10px;
+            margin-bottom: 8px;
+        }}
+        button,
+        .annunciator-btn {{
+            font-size: 10px;
+            font-weight: 800;
+            padding: 4px 8px;
+            margin: 1px;
+            border-radius: 2px;
+            border: 1px solid {t['border_dim']};
+            background-color: {t['annunciator_idle_bg']};
+            color: {t['annunciator_idle_fg']};
+            min-width: 82px;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        .annunciator-btn label {{
+            color: {t['annunciator_idle_fg']};
+            text-shadow: none;
+        }}
+        button:hover,
+        .annunciator-btn:hover {{
+            border-color: {t['accent']};
+            color: {t['accent']};
+            background-color: {t['annunciator_idle_bg']};
+            text-shadow: none;
+        }}
+        .annunciator-btn:hover label {{
+            color: {t['accent']};
+            text-shadow: none;
+        }}
+        button.active,
+        .annunciator-btn.active {{
+            background-color: {t['annunciator_active_bg']};
+            color: {t['annunciator_active_fg']};
+            border: 1px solid {t['annunciator_active_bg']};
+            font-weight: 900;
+            text-shadow: none;
+        }}
+        .annunciator-btn.active label {{
+            color: {t['annunciator_active_fg']};
+            text-shadow: none;
+        }}
+        .comp-tile {{
+            font-size: 10px;
+            font-weight: 900;
+            padding: 4px 6px;
+            margin: 1px;
+            border-radius: 2px;
+            border: 1px solid {t['border_dim']};
+            background-color: {t['annunciator_idle_bg']};
+            color: {t['annunciator_idle_fg']};
+            min-width: 82px;
+            box-shadow: none;
+            text-shadow: none;
+            transition: background-color 0.08s ease, color 0.08s ease;
+        }}
+        .comp-tile label {{
+            color: {t['annunciator_idle_fg']};
+            text-shadow: none;
+        }}
+        .comp-tile.active {{
+            background-color: {t['comp_acty']};
+            border: 1px solid {t['comp_acty']};
+            color: #000000;
+        }}
+        .comp-tile.active label {{
+            color: #000000;
+            text-shadow: none;
+        }}
+        .digital-box {{
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 2px 8px;
+            margin: 1px;
+            min-width: 82px;
+            box-shadow: none;
+        }}
+        .digital-lbl {{
+            font-size: 8.5px;
+            font-weight: 800;
+            color: {t['text_dim']};
+            text-shadow: none;
+        }}
+        .digital-val {{
+            font-size: 17px;
+            font-weight: 900;
+            color: {t['accent']};
+            letter-spacing: 2px;
+            text-shadow: none;
+        }}
+        entry,
+        .search-entry {{
+            background-color: {t['bg_input']};
+            border: 1px solid {t['border_color']};
+            border-radius: {t['radius']};
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: bold;
+            color: {t['text_primary']};
+            margin: 0px 0px 8px 0px;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        entry:focus,
+        .search-entry:focus {{
+            border: 1px solid {t['accent']};
+            background-color: {t['bg_input']};
+            color: {t['text_primary']};
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        scrolledwindow,
+        viewport,
+        list,
+        #list-container {{
+            background-color: {t['bg_list']};
+            border: 1px solid {t['border_dim']};
+            border-radius: {t['radius']};
+            padding: 2px;
+            text-shadow: none;
+        }}
+        row {{
+            background-color: transparent;
+            border: none;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        .app-row {{
+            padding: 6px 10px;
+            margin: 1px 0px;
+            border-radius: {t['radius']};
+            background-color: transparent;
+            border-left: 2px solid transparent;
+            text-shadow: none;
+        }}
+        .app-row.selected {{
+            background-color: {t['bg_selected']};
+            border-left: 2px solid {t['accent']};
+            text-shadow: none;
+        }}
+        .app-name {{
+            font-size: 12px;
+            font-weight: 700;
+            color: {t['text_primary']};
+            text-shadow: none;
+        }}
+        .app-name.selected {{
+            color: {t['accent']};
+            text-shadow: none;
+        }}
+        .app-cmd {{
+            font-size: 9.5px;
+            color: {t['text_dim']};
+            text-shadow: none;
+        }}
+        .cat-code {{
+            font-size: 8.5px;
+            font-weight: 800;
+            padding: 1px 5px;
+            border-radius: 1px;
+            border: 1px solid {t['accent_dim']};
+            color: {t['accent']};
+            background-color: {t['bg_input']};
+            margin-right: 8px;
+            text-shadow: none;
+        }}
+        .footer-lbl {{
+            font-size: 9.5px;
+            color: {t['text_dim']};
+            margin-top: 4px;
+            text-shadow: none;
+        }}
+        scrollbar,
+        scrollbar trough {{
+            background-color: {t['bg_list']};
+            border: none;
+        }}
+        scrollbar slider {{
+            background-color: {t['border_dim']};
+            border-radius: 2px;
+            min-width: 4px;
+        }}
+        scrollbar slider:hover {{
+            background-color: {t['accent_dim']};
+        }}
+        """
+        if not self.css_provider:
+            self.css_provider = Gtk.CssProvider()
+            Gtk.StyleContext.add_provider_for_screen(
+                Gdk.Screen.get_default(),
+                self.css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        self.css_provider.load_from_data(css.encode('utf-8'))
+
+    def build_ui(self):
+        self.set_name("main-window")
+        
+        # Outer Chassis Frame
+        chassis = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        chassis.set_name("chassis-frame")
+        self.add(chassis)
+        
+        # --- 1. TOP DSKY CONSOLE PANEL: Annunciators (Left 2x4) & Proportional Registers (Right 2x2) ---
+        top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        top_box.get_style_context().add_class("dsky-top-panel")
+        chassis.pack_start(top_box, False, False, 0)
+        
+        # Left: Annunciator Category Matrix (2 cols x 4 rows)
+        self.annunciator_grid = Gtk.Grid()
+        self.annunciator_grid.set_row_spacing(2)
+        self.annunciator_grid.set_column_spacing(3)
+        
+        self.annunciator_buttons = {}
+        self.cat_list = []
+        
+        for row_idx, row_items in enumerate(CATEGORIES_GRID):
+            for col_idx, (cat_id, code, label) in enumerate(row_items):
+                btn = Gtk.Button(label=label)
+                btn.set_can_focus(False)
+                btn.set_focus_on_click(False)
+                btn.get_style_context().add_class("annunciator-btn")
+                if cat_id == "ALL":
+                    btn.get_style_context().add_class("active")
+                btn.connect("clicked", self.on_annunciator_clicked, cat_id, code)
+                self.annunciator_grid.attach(btn, col_idx, row_idx, 1, 1)
+                self.annunciator_buttons[cat_id] = btn
+                self.cat_list.append((cat_id, code, label))
+                
+        top_box.pack_start(self.annunciator_grid, False, False, 0)
+        
+        # Vertical Separator between left & right
+        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        top_box.pack_start(sep, False, False, 4)
+        
+        # Right: Proportional 2x2 AGC Display Unit (Matching the 4-row height of annunciators)
+        reg_grid = Gtk.Grid()
+        reg_grid.set_row_spacing(2)
+        reg_grid.set_column_spacing(3)
+        reg_grid.set_hexpand(True)
+        reg_grid.set_halign(Gtk.Align.END)
+        reg_grid.set_valign(Gtk.Align.CENTER)
+        
+        # Top-Left: COMP ACTY indicator tile
+        self.comp_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        self.comp_box.get_style_context().add_class("comp-tile")
+        self.comp_box.get_style_context().add_class("active")
+        self.lbl_comp = Gtk.Label(label="COMP ACTY")
+        self.lbl_comp.set_valign(Gtk.Align.CENTER)
+        self.comp_box.pack_start(self.lbl_comp, True, True, 4)
+        reg_grid.attach(self.comp_box, 0, 0, 1, 1)
+        
+        # Top-Right: PROG digital register
+        p_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        p_vbox.get_style_context().add_class("digital-box")
+        lbl_p = Gtk.Label(label="PROG")
+        lbl_p.get_style_context().add_class("digital-lbl")
+        self.lbl_prog_val = Gtk.Label(label="00")
+        self.lbl_prog_val.get_style_context().add_class("digital-val")
+        p_vbox.pack_start(lbl_p, False, False, 0)
+        p_vbox.pack_start(self.lbl_prog_val, True, True, 0)
+        reg_grid.attach(p_vbox, 1, 0, 1, 1)
+        
+        # Bottom-Left: VERB digital register
+        v_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        v_vbox.get_style_context().add_class("digital-box")
+        lbl_v = Gtk.Label(label="VERB")
+        lbl_v.get_style_context().add_class("digital-lbl")
+        lbl_v_val = Gtk.Label(label="37")
+        lbl_v_val.get_style_context().add_class("digital-val")
+        v_vbox.pack_start(lbl_v, False, False, 0)
+        v_vbox.pack_start(lbl_v_val, True, True, 0)
+        reg_grid.attach(v_vbox, 0, 1, 1, 1)
+        
+        # Bottom-Right: NOUN digital register
+        n_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        n_vbox.get_style_context().add_class("digital-box")
+        lbl_n = Gtk.Label(label="NOUN")
+        lbl_n.get_style_context().add_class("digital-lbl")
+        lbl_n_val = Gtk.Label(label="00")
+        lbl_n_val.get_style_context().add_class("digital-val")
+        n_vbox.pack_start(lbl_n, False, False, 0)
+        n_vbox.pack_start(lbl_n_val, True, True, 0)
+        reg_grid.attach(n_vbox, 1, 1, 1, 1)
+        
+        top_box.pack_start(reg_grid, True, True, 0)
+        
+        # --- 2. MIDDLE: SEARCH BAR (Full-width below annunciators, top of app list) ---
+        self.search_entry = Gtk.Entry()
+        self.search_entry.get_style_context().add_class("search-entry")
+        self.search_entry.set_placeholder_text("V37 N00 // RUN >")
+        self.search_entry.connect("changed", self.on_search_changed)
+        self.search_entry.connect("key-press-event", self.on_key_press)
+        chassis.pack_start(self.search_entry, False, False, 0)
+        
+        # --- 3. BOTTOM: APPLICATION LIST ---
+        self.scroll = Gtk.ScrolledWindow()
+        self.scroll.set_name("list-container")
+        self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.scroll.set_vexpand(True)
+        self.scroll.set_can_focus(False)
+        chassis.pack_start(self.scroll, True, True, 0)
+        
+        self.listbox = Gtk.ListBox()
+        self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.listbox.set_can_focus(False)
+        self.scroll.add(self.listbox)
+        
+        # --- 4. FOOTER HINTS ---
+        footer_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chassis.pack_start(footer_box, False, False, 0)
+        
+        lbl_hint = Gtk.Label(label="[↑/↓] Select  |  [ENTER] Run  |  [TAB] Category  |  [ESC] Abort")
+        lbl_hint.get_style_context().add_class("footer-lbl")
+        footer_box.pack_start(lbl_hint, False, False, 2)
+        
+        self.lbl_count = Gtk.Label(label=f"PROGRAMS: {len(self.apps)}")
+        self.lbl_count.get_style_context().add_class("footer-lbl")
+        footer_box.pack_end(self.lbl_count, False, False, 2)
+
+    def on_annunciator_clicked(self, btn, cat_id, code):
+        self.set_active_category(cat_id, code)
+
+    def set_active_category(self, cat_id, code):
+        self.active_category = cat_id
+        self.lbl_prog_val.set_text(code)
+        for cid, b in self.annunciator_buttons.items():
+            if cid == cat_id:
+                b.get_style_context().add_class("active")
+            else:
+                b.get_style_context().remove_class("active")
+        self.filter_apps()
+        if hasattr(self, 'search_entry') and self.search_entry:
+            self.search_entry.grab_focus()
+
+    def filter_apps(self):
+        query = self.search_entry.get_text().strip().lower()
+        self.filtered_apps = []
+        
+        for app in self.apps:
+            if self.active_category != "ALL" and app["category"] != self.active_category:
+                continue
+            
+            if query:
+                match = (
+                    query in app["name"].lower() or
+                    query in app["exec"].lower() or
+                    query in app["comment"].lower() or
+                    query in app["category"].lower() or
+                    query in app["generic"].lower()
+                )
+                if not match:
+                    continue
+            
+            self.filtered_apps.append(app)
+        
+        self.selected_index = 0
+        self.lbl_count.set_text(f"PROGRAMS: {len(self.filtered_apps):02d}")
+        self.render_list()
+
+    def render_list(self):
+        for child in self.listbox.get_children():
+            self.listbox.remove(child)
+            
+        self.row_items = []
+        
+        for idx, app in enumerate(self.filtered_apps):
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            row_box.get_style_context().add_class("app-row")
+            if idx == self.selected_index:
+                row_box.get_style_context().add_class("selected")
+            
+            # Category Code Tag (e.g. [DEV], [SYS])
+            cat_tag = Gtk.Label(label=f"[{app['category'][:3].upper()}]")
+            cat_tag.get_style_context().add_class("cat-code")
+            row_box.pack_start(cat_tag, False, False, 0)
+            
+            # App Info (Name & Clean Executable/Comment)
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            title_lbl = Gtk.Label(label=app["name"], xalign=0)
+            title_lbl.get_style_context().add_class("app-name")
+            if idx == self.selected_index:
+                title_lbl.get_style_context().add_class("selected")
+            text_vbox.pack_start(title_lbl, False, False, 0)
+            
+            desc_text = app["comment"] if app["comment"] else app["exec"]
+            if len(desc_text) > 55:
+                desc_text = desc_text[:52] + "..."
+            desc_lbl = Gtk.Label(label=desc_text, xalign=0)
+            desc_lbl.get_style_context().add_class("app-cmd")
+            text_vbox.pack_start(desc_lbl, False, False, 0)
+            
+            row_box.pack_start(text_vbox, True, True, 0)
+            
+            # Click handler
+            eb = Gtk.EventBox()
+            eb.add(row_box)
+            eb.connect("button-press-event", self.on_item_clicked, idx)
+            
+            self.listbox.add(eb)
+            self.row_items.append({
+                "row_box": row_box,
+                "title_lbl": title_lbl,
+                "event_box": eb,
+                "app": app
+            })
+        
+        self.listbox.show_all()
+        self.scroll_to_selected()
+
+    def scroll_to_selected(self):
+        if 0 <= self.selected_index < len(self.row_items):
+            eb = self.row_items[self.selected_index]["event_box"]
+            lb_row = eb.get_parent()
+            target = lb_row if lb_row else eb
+            GLib.idle_add(self._do_scroll, target)
+
+    def _do_scroll(self, row):
+        adj = self.scroll.get_vadjustment() if hasattr(self, 'scroll') else None
+        if adj and row:
+            alloc = row.get_allocation()
+            val = adj.get_value()
+            page_size = adj.get_page_size()
+            if alloc.y < val:
+                adj.set_value(alloc.y)
+            elif alloc.y + alloc.height > val + page_size:
+                adj.set_value(alloc.y + alloc.height - page_size)
+        return False
+
+    def on_item_clicked(self, widget, event, idx):
+        self.selected_index = idx
+        self.update_selection_highlight()
+        self.launch_selected()
+
+    def on_search_changed(self, entry):
+        self.filter_apps()
+
+    def on_key_press(self, widget, event):
+        keyval = event.keyval
+        
+        if keyval == Gdk.KEY_Escape:
+            self.close_launcher()
+            return True
+        elif keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self.launch_selected()
+            return True
+        elif keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
+            if len(self.filtered_apps) > 0:
+                self.selected_index = (self.selected_index - 1 + len(self.filtered_apps)) % len(self.filtered_apps)
+                self.update_selection_highlight()
+            return True
+        elif keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down):
+            if len(self.filtered_apps) > 0:
+                self.selected_index = (self.selected_index + 1) % len(self.filtered_apps)
+                self.update_selection_highlight()
+            return True
+        elif keyval in (Gdk.KEY_Page_Up, Gdk.KEY_KP_Page_Up):
+            if len(self.filtered_apps) > 0:
+                self.selected_index = max(0, self.selected_index - 5)
+                self.update_selection_highlight()
+            return True
+        elif keyval in (Gdk.KEY_Page_Down, Gdk.KEY_KP_Page_Down):
+            if len(self.filtered_apps) > 0:
+                self.selected_index = min(len(self.filtered_apps) - 1, self.selected_index + 5)
+                self.update_selection_highlight()
+            return True
+        elif keyval == Gdk.KEY_Tab:
+            current_cat_idx = 0
+            for i, (cid, code, _) in enumerate(self.cat_list):
+                if cid == self.active_category:
+                    current_cat_idx = i
+                    break
+            next_idx = (current_cat_idx + 1) % len(self.cat_list)
+            next_cat, next_code, _ = self.cat_list[next_idx]
+            self.set_active_category(next_cat, next_code)
+            return True
+        elif keyval == Gdk.KEY_ISO_Left_Tab:
+            current_cat_idx = 0
+            for i, (cid, code, _) in enumerate(self.cat_list):
+                if cid == self.active_category:
+                    current_cat_idx = i
+                    break
+            prev_idx = (current_cat_idx - 1 + len(self.cat_list)) % len(self.cat_list)
+            prev_cat, prev_code, _ = self.cat_list[prev_idx]
+            self.set_active_category(prev_cat, prev_code)
+            return True
+            
+        return False
+
+    def update_selection_highlight(self):
+        for idx, item in enumerate(self.row_items):
+            row_box = item["row_box"]
+            title_lbl = item["title_lbl"]
+            if idx == self.selected_index:
+                row_box.get_style_context().add_class("selected")
+                title_lbl.get_style_context().add_class("selected")
+            else:
+                row_box.get_style_context().remove_class("selected")
+                title_lbl.get_style_context().remove_class("selected")
+        self.scroll_to_selected()
+
+    def launch_selected(self):
+        if 0 <= self.selected_index < len(self.filtered_apps):
+            app = self.filtered_apps[self.selected_index]
+            exec_cmd = app["exec"]
+            cmd = re.sub(r"%[a-zA-Z]", "", exec_cmd).strip()
+            try:
+                subprocess.Popen(cmd, shell=True, start_new_session=True)
+            except Exception as e:
+                print(f"Error launching {cmd}: {e}", file=sys.stderr)
+        self.close_launcher()
+
+    def close_launcher(self):
+        cleanup()
+        Gtk.main_quit()
+        self.destroy()
+
+PID_FILE = f"/tmp/dsky-launcher-{os.getuid()}.pid"
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def main():
+    check_singleton()
+    app = DskyLauncher()
+    app.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    app.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

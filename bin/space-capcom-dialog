@@ -1,0 +1,1166 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control CAPCOM Audio & Intercom Console
+Master Output (RX) Volume, Capsule Communicator (TX) Microphone Gain,
+Live Real-Time Mic VU Meter (RMS + Peak Hold), Sidetone Loopback Test,
+WirePlumber / PipeWire Routing & Sink/Source Selector with Segmented Cairo Meters.
+Inspired by Apollo Mission Operations Control Room (MOCR) CAPCOM Audio Consoles.
+Zero white backgrounds — pure dark chassis, phosphor glows, and precision mechanical/digital indicators.
+"""
+import sys, os, subprocess, signal, time, threading, re, wave, struct, math
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import cairo
+
+PID_FILE = f"/tmp/space-capcom-dialog-{os.getuid()}.pid"
+
+THEMES = {
+    "nasa": {
+        "bg": "#0a0d12",
+        "bg_panel": "#11161f",
+        "bg_bezel": "#070a0e",
+        "track_bg": "#030406",
+        "border": "#ffb000",
+        "border_dim": "#263242",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#768696",
+        "btn_bg": "#0a0d12",
+        "btn_border": "#283444",
+        "btn_hover": "#1e2633",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "yellow": "#ffb000",
+        "red": "#ff3b30",
+        "needle": "#ffb000",
+        "radius": "3px",
+    },
+    "crt-amber": {
+        "bg": "#060709",
+        "bg_panel": "#0d0f14",
+        "bg_bezel": "#040507",
+        "track_bg": "#020304",
+        "border": "#ff9e00",
+        "border_dim": "#402800",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#805200",
+        "btn_bg": "#060709",
+        "btn_border": "#3a2400",
+        "btn_hover": "#221500",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "yellow": "#cca000",
+        "red": "#ff5533",
+        "needle": "#ff9e00",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#040704",
+        "bg_panel": "#0a110a",
+        "bg_bezel": "#030603",
+        "track_bg": "#010301",
+        "border": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#030603",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#0c240c",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "yellow": "#99ff33",
+        "red": "#ff4444",
+        "needle": "#33ff33",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#060e0c",
+        "bg_panel": "#0c1b17",
+        "bg_bezel": "#040908",
+        "track_bg": "#020504",
+        "border": "#48e5c2",
+        "border_dim": "#183d34",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#060d0b",
+        "btn_border": "#1a4037",
+        "btn_hover": "#123028",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "yellow": "#d4e09b",
+        "red": "#ff4860",
+        "needle": "#48e5c2",
+        "radius": "2px",
+    }
+}
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip('#')
+    return tuple(int(hex_str[i:i+2], 16)/255.0 for i in (0, 2, 4))
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def play_quindar_tone():
+    """Generate and play a classic 2524 Hz Apollo Quindar intro beep."""
+    wav_path = "/tmp/apollo_quindar.wav"
+    if not os.path.exists(wav_path):
+        sample_rate = 44100
+        duration = 0.22  # 220ms
+        freq = 2524.0    # Apollo Quindar intro frequency
+        num_samples = int(sample_rate * duration)
+        
+        with wave.open(wav_path, "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            for i in range(num_samples):
+                env = math.sin(math.pi * i / num_samples)
+                val = int(32767.0 * 0.45 * env * math.sin(2.0 * math.pi * freq * i / sample_rate))
+                data = struct.pack("<h", val)
+                wf.writeframesraw(data)
+
+    def _worker():
+        if os.path.exists("/usr/bin/pw-play"):
+            subprocess.run(["pw-play", wav_path], capture_output=True)
+        elif os.path.exists("/usr/bin/paplay"):
+            subprocess.run(["paplay", wav_path], capture_output=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+class ApolloAudioMeter(Gtk.DrawingArea):
+    def __init__(self, pal, title="MASTER OUTPUT (RX)"):
+        super().__init__()
+        self.set_size_request(300, 56)
+        self.pal = pal
+        self.title = title
+        self.volume_pct = 70
+        self.is_muted = False
+        self.connect("draw", self.on_draw)
+
+    def set_level(self, pct, muted=False):
+        self.volume_pct = max(0, min(100, int(pct)))
+        self.is_muted = muted
+        self.queue_draw()
+
+    def on_draw(self, widget, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.5)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.stroke()
+
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+        yel_r, yel_g, yel_b = hex_to_rgb(self.pal["yellow"])
+        red_r, red_g, red_b = hex_to_rgb(self.pal["red"])
+
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(8.2)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        cr.move_to(8, 14)
+        cr.show_text(self.title)
+
+        if self.is_muted:
+            status_txt = "MUTED"
+            col_r, col_g, col_b = red_r, red_g, red_b
+        else:
+            status_txt = f"{self.volume_pct}%"
+            col_r, col_g, col_b = (grn_r, grn_g, grn_b) if self.volume_pct <= 80 else (yel_r, yel_g, yel_b)
+
+        cr.set_font_size(8.5)
+        cr.set_source_rgb(col_r, col_g, col_b)
+        ext = cr.text_extents(status_txt)
+        cr.move_to(width - 8 - ext.width, 14)
+        cr.show_text(status_txt)
+
+        # Track background
+        track_x = 8
+        track_y = 20
+        track_w = width - 16
+        track_h = 16
+
+        tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+        cr.set_line_width(1.0)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.stroke()
+
+        if not self.is_muted and self.volume_pct > 0:
+            num_bars = int((self.volume_pct / 100.0) * 24)
+            bar_spacing = (track_w - 4) / 24.0
+
+            for b in range(num_bars):
+                bx = track_x + 2 + b * bar_spacing
+                bw = max(2.0, bar_spacing - 1.5)
+                
+                if b < 16:
+                    cr.set_source_rgba(grn_r, grn_g, grn_b, 0.9)
+                elif b < 20:
+                    cr.set_source_rgba(yel_r, yel_g, yel_b, 0.9)
+                else:
+                    cr.set_source_rgba(red_r, red_g, red_b, 0.95)
+                    
+                cr.rectangle(bx, track_y + 2, bw, track_h - 4)
+                cr.fill()
+
+        # Calibration scale
+        for i in range(11):
+            tx = track_x + (i / 10.0) * track_w
+            is_major = (i % 5 == 0)
+            tick_len = 4 if is_major else 2
+            cr.set_source_rgba(acc_r, acc_g, acc_b, 0.7 if is_major else 0.35)
+            cr.set_line_width(1.0)
+            cr.move_to(tx, track_y + track_h + 1)
+            cr.line_to(tx, track_y + track_h + 1 + tick_len)
+            cr.stroke()
+
+            if is_major:
+                val_str = f"{i*10}"
+                cr.set_font_size(6.0)
+                vext = cr.text_extents(val_str)
+                cr.move_to(tx - vext.width / 2.0, track_y + track_h + 11)
+                cr.show_text(val_str)
+
+        cr.restore()
+        return False
+
+class ApolloLiveMicVuMeter(Gtk.DrawingArea):
+    """Real-Time Live Transducer / Mic VU Meter with RMS, Peak Level & Peak Hold Indicator"""
+    def __init__(self, pal):
+        super().__init__()
+        self.set_size_request(300, 68)
+        self.pal = pal
+        self.rms_db = -60.0
+        self.peak_db = -60.0
+        self.peak_hold_db = -60.0
+        self.peak_hold_time = 0.0
+        self.is_muted = False
+        self.connect("draw", self.on_draw)
+
+    def update_levels(self, rms_db, peak_db, is_muted=False):
+        self.is_muted = is_muted
+        self.rms_db = rms_db
+        self.peak_db = peak_db
+
+        # Peak Hold decay logic
+        now = time.time()
+        if peak_db >= self.peak_hold_db:
+            self.peak_hold_db = peak_db
+            self.peak_hold_time = now
+        elif now - self.peak_hold_time > 0.65:
+            self.peak_hold_db = max(-60.0, self.peak_hold_db - 1.8)
+
+        self.queue_draw()
+
+    def db_to_pct(self, db):
+        # Map -48 dB to 0%, 0 dB (Nominal) to 86%, +3 dB (Peak) to 100%
+        if db <= -48.0:
+            return 0.0
+        elif db <= 0.0:
+            return ((db + 48.0) / 48.0) * 86.0
+        else:
+            return 86.0 + (min(3.0, db) / 3.0) * 14.0
+
+    def on_draw(self, widget, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.5)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.stroke()
+
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+        yel_r, yel_g, yel_b = hex_to_rgb(self.pal["yellow"])
+        red_r, red_g, red_b = hex_to_rgb(self.pal["red"])
+
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(8.0)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        cr.move_to(8, 14)
+        cr.show_text("LIVE MIC VU METER (TX TRANSDUCER)")
+
+        if self.is_muted:
+            status_txt = "MUTED"
+            col_r, col_g, col_b = red_r, red_g, red_b
+        elif self.peak_db > 0.0:
+            status_txt = f"+{self.peak_db:.1f} dB [CLIP]"
+            col_r, col_g, col_b = red_r, red_g, red_b
+        elif self.rms_db > -42.0:
+            status_txt = f"{self.rms_db:.1f} dB [LIVE]"
+            col_r, col_g, col_b = grn_r, grn_g, grn_b
+        else:
+            status_txt = "SILENT"
+            col_r, col_g, col_b = hex_to_rgb(self.pal["text_dim"])
+
+        cr.set_font_size(8.0)
+        cr.set_source_rgb(col_r, col_g, col_b)
+        ext = cr.text_extents(status_txt)
+        cr.move_to(width - 8 - ext.width, 14)
+        cr.show_text(status_txt)
+
+        # Track background
+        track_x = 8
+        track_y = 20
+        track_w = width - 16
+        track_h = 18
+
+        tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+        cr.set_line_width(1.0)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.stroke()
+
+        if not self.is_muted and self.rms_db > -48.0:
+            rms_pct = self.db_to_pct(self.rms_db)
+            peak_pct = self.db_to_pct(self.peak_db)
+            hold_pct = self.db_to_pct(self.peak_hold_db)
+
+            num_bars = 28
+            bar_spacing = (track_w - 4) / float(num_bars)
+            active_rms_bars = int((rms_pct / 100.0) * num_bars)
+            active_peak_bars = int((peak_pct / 100.0) * num_bars)
+
+            for b in range(num_bars):
+                bx = track_x + 2 + b * bar_spacing
+                bw = max(2.0, bar_spacing - 1.5)
+
+                if b < 18:
+                    c_r, c_g, c_b = grn_r, grn_g, grn_b
+                elif b < 24:
+                    c_r, c_g, c_b = yel_r, yel_g, yel_b
+                else:
+                    c_r, c_g, c_b = red_r, red_g, red_b
+
+                # Render active bar (RMS solid, Peak transparent glow)
+                if b <= active_rms_bars:
+                    cr.set_source_rgba(c_r, c_g, c_b, 0.95)
+                    cr.rectangle(bx, track_y + 2, bw, track_h - 4)
+                    cr.fill()
+                elif b <= active_peak_bars:
+                    cr.set_source_rgba(c_r, c_g, c_b, 0.45)
+                    cr.rectangle(bx, track_y + 4, bw, track_h - 8)
+                    cr.fill()
+
+            # Render Peak Hold Line
+            if hold_pct > 0:
+                hx = track_x + 2 + (hold_pct / 100.0) * (track_w - 4)
+                cr.set_source_rgba(red_r if self.peak_hold_db >= 0 else yel_r,
+                                   red_g if self.peak_hold_db >= 0 else yel_g,
+                                   red_b if self.peak_hold_db >= 0 else yel_b, 1.0)
+                cr.set_line_width(2.0)
+                cr.move_to(hx, track_y + 1)
+                cr.line_to(hx, track_y + track_h - 1)
+                cr.stroke()
+
+        # Calibration scale (-48, -36, -24, -12, -6, 0, +3 dB)
+        scale_dbs = [(-48, "-48"), (-36, "-36"), (-24, "-24"), (-12, "-12"), (-6, "-6"), (0, "0"), (3, "+3")]
+        for db_val, lbl_str in scale_dbs:
+            pct = self.db_to_pct(db_val)
+            tx = track_x + 2 + (pct / 100.0) * (track_w - 4)
+            is_0 = (db_val == 0)
+
+            cr.set_source_rgba(red_r if db_val > 0 else (acc_r if is_0 else grn_r), 
+                               red_g if db_val > 0 else (acc_g if is_0 else grn_g), 
+                               red_b if db_val > 0 else (acc_b if is_0 else grn_b), 0.7 if is_0 else 0.4)
+            cr.set_line_width(1.0)
+            cr.move_to(tx, track_y + track_h + 1)
+            cr.line_to(tx, track_y + track_h + (5 if is_0 else 3))
+            cr.stroke()
+
+            cr.set_font_size(5.8)
+            vext = cr.text_extents(lbl_str)
+            cr.move_to(tx - vext.width / 2.0, track_y + track_h + 12)
+            cr.show_text(lbl_str)
+
+        cr.restore()
+        return False
+
+class SpaceCapcomDialog(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Apollo Mission Control CAPCOM Audio & Intercom")
+        self.set_wmclass("space-capcom-dialog", "space-capcom-dialog")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(740, 600)
+
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        self.sink_vol = 70
+        self.sink_muted = False
+        self.source_vol = 100
+        self.source_muted = False
+        self.sinks = []
+        self.sources = []
+        self.updating_sliders = False
+
+        self.is_monitoring = False
+        self.loopback_proc = None
+        self.mic_capture_proc = None
+        self.mic_capture_running = True
+
+        self.displayed_rms = -60.0
+        self.displayed_peak = -60.0
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+        self.update_audio_status()
+        GLib.timeout_add(1500, self.update_audio_status)
+
+        # Start live microphone PCM monitor thread
+        self.start_live_mic_capture()
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+            background-color: transparent;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_panel']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 10px 18px;
+        }}
+        .telemetry-card {{
+            background-color: {self.pal['bg_panel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+        }}
+        .audio-card {{
+            background-color: {self.pal['bg_panel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+            margin-bottom: 6px;
+        }}
+        .audio-card.active {{
+            border: 1.5px solid {self.pal['green']};
+        }}
+        button,
+        button.action-btn {{
+            background-image: none;
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 5px 9px;
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        button.action-btn:hover {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        button.connect-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['accent']};
+            border-radius: {self.pal['radius']};
+            padding: 4px 9px;
+        }}
+        button.connect-btn:hover {{
+            background-color: {self.pal['btn_hover']};
+        }}
+        button.disconnect-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['red']};
+            border-radius: {self.pal['radius']};
+            padding: 4px 9px;
+        }}
+        button.disconnect-btn:hover {{
+            background-color: #3b1111;
+        }}
+        scale trough {{
+            background-color: {self.pal['track_bg']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: 2px;
+            min-height: 8px;
+        }}
+        scale highlight {{
+            background-color: {self.pal['accent']};
+            border-radius: 2px;
+        }}
+        scale slider {{
+            background-color: {self.pal['text_main']};
+            border: 1px solid {self.pal['border']};
+            border-radius: 2px;
+            min-width: 14px;
+            min-height: 18px;
+        }}
+        scrollbar slider {{
+            background-color: {self.pal['accent']};
+            border-radius: 2px;
+            min-width: 6px;
+        }}
+        scrollbar trough {{
+            background-color: {self.pal['track_bg']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🎙️ APOLLO MISSION CONTROL // CAPCOM AUDIO &amp; INTERCOM</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>CAPSULE COMMUNICATOR, LIVE VU TRANSDUCER &amp; WIREPLUMBER ROUTING // {self.theme_name.upper()}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        main_vbox.pack_start(header, False, False, 0)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(14)
+        body.set_margin_right(14)
+
+        # Top Control Area: Output & Input Sliders + Cairo Meters
+        meters_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        meters_box.set_homogeneous(True)
+
+        # Left Card: Output / Speaker
+        card_out = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card_out.get_style_context().add_class("telemetry-card")
+
+        self.meter_sink = ApolloAudioMeter(self.pal, title="CABIN INTERCOM (RX / OUTPUT)")
+        card_out.pack_start(self.meter_sink, False, False, 0)
+
+        out_ctl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.slider_sink = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.slider_sink.set_value(70)
+        self.slider_sink.set_draw_value(False)
+        self.slider_sink.connect("value-changed", self.on_sink_slider_changed)
+        out_ctl_box.pack_start(self.slider_sink, True, True, 0)
+
+        self.btn_mute_sink = Gtk.Button()
+        self.btn_mute_sink.get_style_context().add_class("action-btn")
+        self.lbl_btn_mute_sink = Gtk.Label()
+        self.lbl_btn_mute_sink.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ MUTE: OFF ]</span>")
+        self.btn_mute_sink.add(self.lbl_btn_mute_sink)
+        self.btn_mute_sink.connect("clicked", lambda w: self.toggle_sink_mute())
+        out_ctl_box.pack_start(self.btn_mute_sink, False, False, 0)
+
+        card_out.pack_start(out_ctl_box, False, False, 0)
+        meters_box.pack_start(card_out, True, True, 0)
+
+        # Right Card: Input / CAPCOM Mic with LIVE VU METER
+        card_in = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card_in.get_style_context().add_class("telemetry-card")
+
+        # Live Dynamic Mic VU Meter
+        self.live_vu_meter = ApolloLiveMicVuMeter(self.pal)
+        card_in.pack_start(self.live_vu_meter, False, False, 0)
+
+        in_ctl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.slider_source = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.slider_source.set_value(100)
+        self.slider_source.set_draw_value(False)
+        self.slider_source.connect("value-changed", self.on_source_slider_changed)
+        in_ctl_box.pack_start(self.slider_source, True, True, 0)
+
+        self.btn_mute_source = Gtk.Button()
+        self.btn_mute_source.get_style_context().add_class("action-btn")
+        self.lbl_btn_mute_source = Gtk.Label()
+        self.lbl_btn_mute_source.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ MIC: ON ]</span>")
+        self.btn_mute_source.add(self.lbl_btn_mute_source)
+        self.btn_mute_source.connect("clicked", lambda w: self.toggle_source_mute())
+        in_ctl_box.pack_start(self.btn_mute_source, False, False, 0)
+
+        card_in.pack_start(in_ctl_box, False, False, 0)
+        meters_box.pack_start(card_in, True, True, 0)
+
+        body.pack_start(meters_box, False, False, 0)
+
+        # Actions & Presets Toolbar
+        action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        btn_mute_all = Gtk.Button()
+        btn_mute_all.get_style_context().add_class("action-btn")
+        lbl_ma = Gtk.Label()
+        lbl_ma.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['red']}'>[ SILENCE (0%) ]</span>")
+        btn_mute_all.add(lbl_ma)
+        btn_mute_all.connect("clicked", lambda w: self.set_sink_volume(0))
+        action_bar.pack_start(btn_mute_all, False, False, 0)
+
+        btn_vol_30 = Gtk.Button()
+        btn_vol_30.get_style_context().add_class("action-btn")
+        lbl_30 = Gtk.Label()
+        lbl_30.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>[ CABIN 30% ]</span>")
+        btn_vol_30.add(lbl_30)
+        btn_vol_30.connect("clicked", lambda w: self.set_sink_volume(30))
+        action_bar.pack_start(btn_vol_30, False, False, 0)
+
+        btn_vol_70 = Gtk.Button()
+        btn_vol_70.get_style_context().add_class("action-btn")
+        lbl_70 = Gtk.Label()
+        lbl_70.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['accent']}'>[ NOMINAL 70% ]</span>")
+        btn_vol_70.add(lbl_70)
+        btn_vol_70.connect("clicked", lambda w: self.set_sink_volume(70))
+        action_bar.pack_start(btn_vol_70, False, False, 0)
+
+        btn_vol_100 = Gtk.Button()
+        btn_vol_100.get_style_context().add_class("action-btn")
+        lbl_100 = Gtk.Label()
+        lbl_100.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ FULL 100% ]</span>")
+        btn_vol_100.add(lbl_100)
+        btn_vol_100.connect("clicked", lambda w: self.set_sink_volume(100))
+        action_bar.pack_start(btn_vol_100, False, False, 0)
+
+        # Live Mic Sidetone Loopback Button
+        self.btn_loopback = Gtk.Button()
+        self.btn_loopback.get_style_context().add_class("action-btn")
+        self.lbl_btn_loopback = Gtk.Label()
+        self.lbl_btn_loopback.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_sub']}'>[ SIDETONE: OFF ]</span>")
+        self.btn_loopback.add(self.lbl_btn_loopback)
+        self.btn_loopback.connect("clicked", lambda w: self.toggle_sidetone_loopback())
+        action_bar.pack_start(self.btn_loopback, False, False, 0)
+
+        # Quindar Test Tone Button
+        btn_chirp = Gtk.Button()
+        btn_chirp.get_style_context().add_class("action-btn")
+        lbl_ch = Gtk.Label()
+        lbl_ch.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['yellow']}'>[ TEST QUINDAR TONE ]</span>")
+        btn_chirp.add(lbl_ch)
+        btn_chirp.connect("clicked", lambda w: play_quindar_tone())
+        action_bar.pack_start(btn_chirp, False, False, 0)
+
+        body.pack_start(action_bar, False, False, 0)
+
+        # Routing Section: Sinks (Outputs) and Sources (Inputs) Lists
+        routing_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        routing_hbox.set_homogeneous(True)
+
+        # Sinks Box
+        sinks_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        lbl_sinks_title = Gtk.Label()
+        lbl_sinks_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>OUTPUT AUDIO ENDPOINTS (SINKS):</span>")
+        lbl_sinks_title.set_xalign(0.0)
+        sinks_vbox.pack_start(lbl_sinks_title, False, False, 0)
+
+        scroll_sinks = Gtk.ScrolledWindow()
+        scroll_sinks.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll_sinks.set_min_content_height(150)
+
+        self.sinks_list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.sinks_list_box.set_margin_right(4)
+        scroll_sinks.add(self.sinks_list_box)
+        sinks_vbox.pack_start(scroll_sinks, True, True, 0)
+        routing_hbox.pack_start(sinks_vbox, True, True, 0)
+
+        # Sources Box
+        sources_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        lbl_sources_title = Gtk.Label()
+        lbl_sources_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>INPUT CAPCOM TRANSDUCERS (SOURCES):</span>")
+        lbl_sources_title.set_xalign(0.0)
+        sources_vbox.pack_start(lbl_sources_title, False, False, 0)
+
+        scroll_sources = Gtk.ScrolledWindow()
+        scroll_sources.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll_sources.set_min_content_height(150)
+
+        self.sources_list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.sources_list_box.set_margin_right(4)
+        scroll_sources.add(self.sources_list_box)
+        sources_vbox.pack_start(scroll_sources, True, True, 0)
+        routing_hbox.pack_start(sources_vbox, True, True, 0)
+
+        body.pack_start(routing_hbox, True, True, 0)
+        main_vbox.pack_start(body, True, True, 0)
+
+        # Footer
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] RX VOL   [ M ] MUTE RX   [ N ] MUTE TX   [ L ] SIDETONE TEST   [ 1-4 ] PRESETS   [ T ] QUINDAR TEST   [ ESC ] CLOSE</span>")
+        footer.set_margin_bottom(8)
+        main_vbox.pack_start(footer, False, False, 0)
+
+        self.add(main_vbox)
+
+    def start_live_mic_capture(self):
+        def _capture_loop():
+            try:
+                self.mic_capture_proc = subprocess.Popen(
+                    ["parec", "--rate=16000", "--channels=1", "--format=s16le", "--latency=512"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL
+                )
+                chunk_size = 512 * 2  # 512 samples = 32ms frame
+
+                while self.mic_capture_running and self.mic_capture_proc.poll() is None:
+                    raw = self.mic_capture_proc.stdout.read(chunk_size)
+                    if len(raw) < chunk_size:
+                        time.sleep(0.02)
+                        continue
+
+                    count = len(raw) // 2
+                    shorts = struct.unpack(f"<{count}h", raw)
+                    max_sample = max(abs(s) for s in shorts) if count > 0 else 0
+                    sum_sq = sum(s * s for s in shorts)
+                    rms = math.sqrt(sum_sq / count) if count > 0 else 0
+
+                    if self.source_muted:
+                        cur_rms_db = -60.0
+                        cur_peak_db = -60.0
+                    else:
+                        cur_rms_db = 20.0 * math.log10(rms / 32767.0) if rms > 1.0 else -60.0
+                        cur_peak_db = 20.0 * math.log10(max_sample / 32767.0) if max_sample > 1 else -60.0
+
+                    # Attack and decay smoothing physics
+                    if cur_rms_db > self.displayed_rms:
+                        self.displayed_rms = cur_rms_db  # fast attack
+                    else:
+                        self.displayed_rms = max(-60.0, self.displayed_rms * 0.92 + cur_rms_db * 0.08)  # smooth decay
+
+                    if cur_peak_db > self.displayed_peak:
+                        self.displayed_peak = cur_peak_db
+                    else:
+                        self.displayed_peak = max(-60.0, self.displayed_peak * 0.88 + cur_peak_db * 0.12)
+
+                    def _update(r_db=self.displayed_rms, p_db=self.displayed_peak, m=self.source_muted):
+                        self.live_vu_meter.update_levels(r_db, p_db, is_muted=m)
+
+                    GLib.idle_add(_update)
+                    time.sleep(0.018)  # ~50 FPS refresh
+
+            except Exception as e:
+                pass
+
+        threading.Thread(target=_capture_loop, daemon=True).start()
+
+    def toggle_sidetone_loopback(self):
+        if self.is_monitoring:
+            self.is_monitoring = False
+            if self.loopback_proc and self.loopback_proc.poll() is None:
+                self.loopback_proc.terminate()
+                self.loopback_proc = None
+            self.lbl_btn_loopback.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_sub']}'>[ SIDETONE: OFF ]</span>")
+            subprocess.run([
+                "notify-send", "-t", "2500",
+                "CAPCOM SIDETONE DISENGAGED",
+                "Live mic loopback monitor stopped."
+            ])
+        else:
+            self.is_monitoring = True
+            try:
+                self.loopback_proc = subprocess.Popen(
+                    ["pw-loopback", "--latency=20"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+            self.lbl_btn_loopback.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['green']}'>[ SIDETONE: ACTIVE ]</span>")
+            subprocess.run([
+                "notify-send", "-t", "3000",
+                "CAPCOM SIDETONE ENGAGED",
+                "Live mic loopback active. Speak into mic to test audio feedback."
+            ])
+
+    def on_sink_slider_changed(self, scale):
+        if self.updating_sliders:
+            return
+        val = int(scale.get_value())
+        self.set_sink_volume(val)
+
+    def on_source_slider_changed(self, scale):
+        if self.updating_sliders:
+            return
+        val = int(scale.get_value())
+        self.set_source_volume(val)
+
+    def set_sink_volume(self, val):
+        val = max(0, min(100, val))
+        self.sink_vol = val
+        self.meter_sink.set_level(val, self.sink_muted)
+        
+        self.updating_sliders = True
+        self.slider_sink.set_value(val)
+        self.updating_sliders = False
+
+        def _worker():
+            dec_val = val / 100.0
+            subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{dec_val:.2f}"])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def set_source_volume(self, val):
+        val = max(0, min(100, val))
+        self.source_vol = val
+
+        self.updating_sliders = True
+        self.slider_source.set_value(val)
+        self.updating_sliders = False
+
+        def _worker():
+            dec_val = val / 100.0
+            subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SOURCE@", f"{dec_val:.2f}"])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def toggle_sink_mute(self):
+        def _worker():
+            subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+            GLib.idle_add(self.update_audio_status)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def toggle_source_mute(self):
+        def _worker():
+            subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
+            GLib.idle_add(self.update_audio_status)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def set_default_device(self, dev_id, is_source=False):
+        def _worker():
+            subprocess.run(["wpctl", "set-default", str(dev_id)])
+            GLib.idle_add(self.update_audio_status)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def update_audio_status(self):
+        def _fetch():
+            out = subprocess.run(["wpctl", "status"], capture_output=True, text=True).stdout
+            sinks = []
+            sources = []
+            
+            in_sinks = False
+            in_sources = False
+            
+            for line in out.splitlines():
+                if "Sinks:" in line:
+                    in_sinks = True
+                    in_sources = False
+                    continue
+                elif "Sources:" in line:
+                    in_sinks = False
+                    in_sources = True
+                    continue
+                elif in_sinks and ("Filters:" in line or "Streams:" in line or "Devices:" in line or not line.strip().startswith(("│", "├", "└"))):
+                    in_sinks = False
+                elif in_sources and ("Filters:" in line or "Streams:" in line or "Devices:" in line or "Video" in line or not line.strip().startswith(("│", "├", "└"))):
+                    in_sources = False
+                    
+                m = re.search(r"([*]?)\s+(\d+)\.\s+(.+?)\s+\[vol:\s*([0-9.]+)(?:\s+(MUTED))?\]", line)
+                if m:
+                    is_default = (m.group(1) == "*")
+                    id_num = m.group(2)
+                    name = m.group(3).strip()
+                    vol = float(m.group(4))
+                    muted = (m.group(5) == "MUTED")
+                    item = {"id": id_num, "name": name, "vol": vol, "muted": muted, "default": is_default}
+                    if in_sinks: sinks.append(item)
+                    elif in_sources: sources.append(item)
+
+            # Direct default queries
+            sink_vol_out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True, text=True).stdout
+            m_svol = re.search(r"Volume:\s*([0-9.]+)(?:\s*\[(MUTED)\])?", sink_vol_out)
+            cur_sink_vol = int(float(m_svol.group(1)) * 100) if m_svol else 70
+            cur_sink_muted = bool(m_svol and m_svol.group(2) == "MUTED")
+
+            source_vol_out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"], capture_output=True, text=True).stdout
+            m_srcvol = re.search(r"Volume:\s*([0-9.]+)(?:\s*\[(MUTED)\])?", source_vol_out)
+            cur_source_vol = int(float(m_srcvol.group(1)) * 100) if m_srcvol else 100
+            cur_source_muted = bool(m_srcvol and m_srcvol.group(2) == "MUTED")
+
+            return {
+                "sink_vol": cur_sink_vol,
+                "sink_muted": cur_sink_muted,
+                "source_vol": cur_source_vol,
+                "source_muted": cur_source_muted,
+                "sinks": sinks,
+                "sources": sources
+            }
+
+        def _apply(res):
+            self.sink_vol = res["sink_vol"]
+            self.sink_muted = res["sink_muted"]
+            self.source_vol = res["source_vol"]
+            self.source_muted = res["source_muted"]
+            self.sinks = res["sinks"]
+            self.sources = res["sources"]
+
+            # Update Sliders
+            self.updating_sliders = True
+            self.slider_sink.set_value(self.sink_vol)
+            self.slider_source.set_value(self.source_vol)
+            self.updating_sliders = False
+
+            # Update Meters
+            self.meter_sink.set_level(self.sink_vol, self.sink_muted)
+
+            # Update Mute Button text
+            s_col = self.pal['red'] if self.sink_muted else self.pal['green']
+            s_txt = "ON" if self.sink_muted else "OFF"
+            self.lbl_btn_mute_sink.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{s_col}'>[ MUTE: {s_txt} ]</span>")
+
+            src_col = self.pal['red'] if self.source_muted else self.pal['green']
+            src_txt = "MUTED" if self.source_muted else "ON"
+            self.lbl_btn_mute_source.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{src_col}'>[ MIC: {src_txt} ]</span>")
+
+            # Render Sinks List
+            for child in self.sinks_list_box.get_children():
+                self.sinks_list_box.remove(child)
+
+            if not res["sinks"]:
+                empty = Gtk.Label()
+                empty.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>No active sink endpoints.</span>")
+                self.sinks_list_box.pack_start(empty, True, True, 0)
+            else:
+                for s in res["sinks"]:
+                    card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                    card.get_style_context().add_class("audio-card")
+                    if s["default"]:
+                        card.get_style_context().add_class("active")
+
+                    info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    card.pack_start(info, True, True, 0)
+
+                    t_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                    lbl_n = Gtk.Label()
+                    lbl_n.set_markup(f"<span font_weight='bold' font_size='8800' foreground='{self.pal['text_main']}'>{s['name']}</span>")
+                    lbl_n.set_xalign(0.0)
+                    t_box.pack_start(lbl_n, False, False, 0)
+
+                    if s["default"]:
+                        lbl_act = Gtk.Label()
+                        lbl_act.set_markup(f"<span font_weight='bold' font_size='7200' foreground='{self.pal['green']}'>[ ACTIVE ]</span>")
+                        t_box.pack_start(lbl_act, False, False, 0)
+
+                    info.pack_start(t_box, False, False, 0)
+
+                    sub = Gtk.Label()
+                    vol_pct = int(s['vol'] * 100)
+                    sub.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>ID: {s['id']} | LEVEL: {vol_pct}%</span>")
+                    sub.set_xalign(0.0)
+                    info.pack_start(sub, False, False, 0)
+
+                    if not s["default"]:
+                        btn_set = Gtk.Button()
+                        btn_set.get_style_context().add_class("connect-btn")
+                        lbl_b = Gtk.Label()
+                        lbl_b.set_markup(f"<span font_weight='bold' font_size='7500' foreground='{self.pal['accent']}'>ENGAGE</span>")
+                        btn_set.add(lbl_b)
+                        btn_set.connect("clicked", lambda w, dev_id=s['id']: self.set_default_device(dev_id, False))
+                        card.pack_end(btn_set, False, False, 0)
+
+                    self.sinks_list_box.pack_start(card, False, False, 0)
+
+            # Render Sources List
+            for child in self.sources_list_box.get_children():
+                self.sources_list_box.remove(child)
+
+            if not res["sources"]:
+                empty = Gtk.Label()
+                empty.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>No active source endpoints.</span>")
+                self.sources_list_box.pack_start(empty, True, True, 0)
+            else:
+                for src in res["sources"]:
+                    card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                    card.get_style_context().add_class("audio-card")
+                    if src["default"]:
+                        card.get_style_context().add_class("active")
+
+                    info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                    card.pack_start(info, True, True, 0)
+
+                    t_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                    lbl_n = Gtk.Label()
+                    lbl_n.set_markup(f"<span font_weight='bold' font_size='8800' foreground='{self.pal['text_main']}'>{src['name']}</span>")
+                    lbl_n.set_xalign(0.0)
+                    t_box.pack_start(lbl_n, False, False, 0)
+
+                    if src["default"]:
+                        lbl_act = Gtk.Label()
+                        lbl_act.set_markup(f"<span font_weight='bold' font_size='7200' foreground='{self.pal['green']}'>[ ACTIVE ]</span>")
+                        t_box.pack_start(lbl_act, False, False, 0)
+
+                    info.pack_start(t_box, False, False, 0)
+
+                    sub = Gtk.Label()
+                    vol_pct = int(src['vol'] * 100)
+                    sub.set_markup(f"<span font_size='7200' foreground='{self.pal['text_dim']}'>ID: {src['id']} | LEVEL: {vol_pct}%</span>")
+                    sub.set_xalign(0.0)
+                    info.pack_start(sub, False, False, 0)
+
+                    if not src["default"]:
+                        btn_set = Gtk.Button()
+                        btn_set.get_style_context().add_class("connect-btn")
+                        lbl_b = Gtk.Label()
+                        lbl_b.set_markup(f"<span font_weight='bold' font_size='7500' foreground='{self.pal['accent']}'>ENGAGE</span>")
+                        btn_set.add(lbl_b)
+                        btn_set.connect("clicked", lambda w, dev_id=src['id']: self.set_default_device(dev_id, True))
+                        card.pack_end(btn_set, False, False, 0)
+
+                    self.sources_list_box.pack_start(card, False, False, 0)
+
+            self.sinks_list_box.show_all()
+            self.sources_list_box.show_all()
+
+        def _worker():
+            try:
+                res = _fetch()
+                GLib.idle_add(_apply, res)
+            except Exception as e:
+                print("Error fetching audio status:", e, file=sys.stderr)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return True
+
+    def on_key_press(self, widget, event):
+        keyname = Gdk.keyval_name(event.keyval)
+
+        if keyname in ["Escape", "q", "Q"]:
+            self.close_window()
+            return True
+        elif keyname in ["m", "M"]:
+            self.toggle_sink_mute()
+            return True
+        elif keyname in ["n", "N"]:
+            self.toggle_source_mute()
+            return True
+        elif keyname in ["l", "L"]:
+            self.toggle_sidetone_loopback()
+            return True
+        elif keyname in ["t", "T"]:
+            play_quindar_tone()
+            return True
+        elif keyname in ["1"]:
+            self.set_sink_volume(30)
+            return True
+        elif keyname in ["2"]:
+            self.set_sink_volume(50)
+            return True
+        elif keyname in ["3"]:
+            self.set_sink_volume(70)
+            return True
+        elif keyname in ["4"]:
+            self.set_sink_volume(100)
+            return True
+        elif keyname in ["0"]:
+            self.set_sink_volume(0)
+            return True
+        elif keyname in ["Up", "k", "K", "plus", "equal"]:
+            self.set_sink_volume(self.sink_vol + 5)
+            return True
+        elif keyname in ["Down", "j", "J", "minus"]:
+            self.set_sink_volume(self.sink_vol - 5)
+            return True
+
+        return False
+
+    def close_window(self):
+        self.mic_capture_running = False
+        if self.mic_capture_proc and self.mic_capture_proc.poll() is None:
+            self.mic_capture_proc.terminate()
+        if self.loopback_proc and self.loopback_proc.poll() is None:
+            self.loopback_proc.terminate()
+        cleanup()
+        self.hide()
+        Gtk.main_quit()
+
+def main():
+    check_singleton()
+    win = SpaceCapcomDialog()
+    win.connect("destroy", lambda w: (win.close_window()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

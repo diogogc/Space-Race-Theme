@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Screensaver Configuration
+GenericName=Screensaver & Lockscreen Settings
+Comment=Configure idle timeout, lock on wake, and space screensaver scenes
+Exec=space-screensaver-config
+Icon=preferences-desktop-screensaver
+Terminal=false
+Categories=Utility;
+Keywords=screensaver;idle;lock;timeout;apollo;hyprlock;

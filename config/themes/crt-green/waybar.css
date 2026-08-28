@@ -1,0 +1,93 @@
+/* DEC VT100 / P1 Phosphor Green CRT Theme for Waybar */
+@define-color bg_bar rgba(10, 14, 10, 0.96);
+@define-color bg_card #101c10;
+@define-color bg_card_hover #182b18;
+@define-color fg_primary #33ff33;
+@define-color fg_muted #208020;
+@define-color border_color #145214;
+
+@define-color green_glow #33ff33;
+@define-color green_dim #00bb00;
+
+window#waybar {
+    background-color: @bg_bar;
+    border: none;
+    color: @fg_primary;
+    text-shadow: 0 0 4px rgba(51, 255, 51, 0.5);
+}
+
+#custom-theme {
+    background-color: @bg_card;
+    color: @green_glow;
+    border: 1px solid @green_glow;
+    box-shadow: 0 0 8px rgba(51, 255, 51, 0.4);
+    font-weight: bold;
+}
+
+#custom-telemetry, #custom-met {
+    background-color: @bg_card;
+    color: @fg_primary;
+    border: 1px solid @border_color;
+}
+
+#workspaces button {
+    color: @fg_muted;
+    background: transparent;
+}
+
+#workspaces button.active {
+    background-color: @bg_card;
+    color: @green_glow;
+    border: 1px solid @green_glow;
+    text-shadow: 0 0 6px rgba(51, 255, 51, 0.8);
+    font-weight: bold;
+}
+
+#clock, #pulseaudio, #network, #custom-network-telemetry, #custom-power-telemetry, #cpu, #memory {
+    background-color: @bg_card;
+    border: 1px solid @border_color;
+    color: @fg_primary;
+}
+
+#custom-iss {
+    background-color: @bg_card;
+    border: 1px solid @green_glow;
+    color: @green_glow;
+}
+
+#custom-iss.iss-acquired {
+    background-color: #ff3300;
+    border: 1px solid #ffaa00;
+    color: #000000;
+    font-weight: bold;
+    animation: blink 0.8s infinite alternate;
+}
+
+#custom-iss:hover {
+    background-color: @green_glow;
+    color: #040704;
+}
+
+#custom-power {
+    background-color: @bg_card;
+    color: @green_glow;
+    border: 1px solid @green_glow;
+    font-weight: bold;
+}
+
+#custom-power:hover {
+    background-color: @green_glow;
+    color: #0a0e0a;
+}
+
+tooltip {
+    background-color: @bg_card;
+    border: 1px solid @green_glow;
+    border-radius: 0px;
+    padding: 6px 10px;
+}
+
+tooltip label {
+    color: @fg_primary;
+    text-shadow: 0 0 4px rgba(51, 255, 51, 0.5);
+}

@@ -1,0 +1,107 @@
+/* Apollo 1969 Flight Operations Theme for Waybar */
+@define-color bg_bar rgba(20, 23, 29, 0.94);
+@define-color bg_card #1c212a;
+@define-color bg_card_hover #252c38;
+@define-color fg_primary #e2e8f0;
+@define-color fg_muted #8892b0;
+@define-color border_color #2f3846;
+
+@define-color dsky_amber #ffb000;
+@define-color telem_green #2ef788;
+@define-color alert_red #e63946;
+@define-color cyan_accent #00d2ff;
+
+window#waybar {
+    background-color: @bg_bar;
+    border: none;
+    color: @fg_primary;
+}
+
+#custom-theme {
+    background-color: @bg_card;
+    color: @dsky_amber;
+    border: 1px solid @dsky_amber;
+    box-shadow: 0 0 4px rgba(255, 176, 0, 0.3);
+}
+
+#custom-telemetry {
+    background-color: @bg_card;
+    color: @telem_green;
+    border: 1px solid #285437;
+}
+
+#custom-met {
+    background-color: @bg_card;
+    color: @dsky_amber;
+    border: 1px solid @border_color;
+}
+
+#workspaces button {
+    color: @fg_muted;
+    background: transparent;
+}
+
+#workspaces button.active {
+    background-color: @bg_card;
+    color: @dsky_amber;
+    border-bottom: 2px solid @dsky_amber;
+    font-weight: bold;
+}
+
+#workspaces button.urgent {
+    background-color: @alert_red;
+    color: #ffffff;
+}
+
+#clock, #pulseaudio, #network, #custom-network-telemetry, #custom-power-telemetry, #cpu, #memory {
+    background-color: @bg_card;
+    border: 1px solid @border_color;
+    color: @fg_primary;
+}
+
+#custom-iss {
+    background-color: @bg_card;
+    border: 1px solid @cyan_accent;
+    color: @cyan_accent;
+}
+
+#custom-iss.iss-acquired {
+    background-color: @alert_red;
+    border: 1px solid #ff3333;
+    color: #ffffff;
+    animation: blink 0.8s infinite alternate;
+}
+
+#custom-iss.iss-flare {
+    background-color: @bg_card;
+    border: 1px solid @dsky_amber;
+    color: @dsky_amber;
+}
+
+#custom-iss:hover {
+    background-color: @cyan_accent;
+    color: #0a0d12;
+}
+
+#custom-power {
+    background-color: @bg_card;
+    color: @dsky_amber;
+    border: 1px solid @dsky_amber;
+    font-weight: bold;
+}
+
+#custom-power:hover {
+    background-color: @dsky_amber;
+    color: #14171d;
+}
+
+tooltip {
+    background-color: @bg_card;
+    border: 1px solid @dsky_amber;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+tooltip label {
+    color: @fg_primary;
+}

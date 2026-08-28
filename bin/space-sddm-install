@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_USER="${SUDO_USER:-$USER}"
+REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+
+THEME_SRC="$REAL_HOME/.config/themes/sddm-space-race"
+THEME_DEST="/usr/share/sddm/themes/space-race"
+
+echo "=================================================="
+echo "🚀 Space Mission Control SDDM Theme Installer"
+echo "=================================================="
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script requires root privileges to install to /usr/share/sddm/themes/."
+   echo "Please run: sudo $0"
+   exit 1
+fi
+
+echo "-> Installing Space Race theme to $THEME_DEST..."
+mkdir -p "$THEME_DEST"
+cp -r "$THEME_SRC"/* "$THEME_DEST"/
+
+echo "-> Configuring SDDM to use 'space-race' theme in /etc/sddm.conf..."
+mkdir -p /etc/sddm.conf.d
+
+cat << 'CONF' > /etc/sddm.conf.d/space-race-theme.conf
+[Theme]
+Current=space-race
+CONF
+
+echo "=================================================="
+echo "✅ SDDM Space Race Theme installed and enabled!"
+echo "You can test the greeter screen with: sddm-greeter-qt6 --test-mode --theme $THEME_DEST (or sddm-greeter)"
+echo "=================================================="

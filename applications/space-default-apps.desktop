@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Default Applications Console
+GenericName=Default Applications Configuration
+Comment=Configure default terminal, web browser, file manager, and system handlers
+Icon=preferences-desktop-default-applications
+Exec=/home/diogo/.local/bin/space-default-apps
+Terminal=false
+Categories=Utility;
+StartupWMClass=space-default-apps

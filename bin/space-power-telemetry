@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""
+Apollo Power Telemetry & Energy Management Daemon for Waybar
+"""
+import os, sys, json, subprocess
+
+PROFILE_MAP = {
+    "power-saver": {
+        "tag": "EMERGENCY",
+        "desc": "Emergency Low-Power Drift (Power Saver)",
+        "next": "balanced",
+        "icon": "🔴"
+    },
+    "balanced": {
+        "tag": "COASTING",
+        "desc": "Nominal Orbital Coasting (Balanced)",
+        "next": "performance",
+        "icon": "🟡"
+    },
+    "performance": {
+        "tag": "ORBIT-MANEUVER",
+        "desc": "Orbital Maneuvering / Full Thrust (Performance)",
+        "next": "power-saver",
+        "icon": "🟢"
+    }
+}
+
+def get_power_profile():
+    try:
+        res = subprocess.check_output(["powerprofilesctl", "get"], text=True).strip()
+        if res in PROFILE_MAP:
+            return res
+    except Exception:
+        pass
+    return "balanced"
+
+def set_next_power_profile():
+    current = get_power_profile()
+    next_prof = PROFILE_MAP[current]["next"]
+    try:
+        subprocess.run(["powerprofilesctl", "set", next_prof], check=True)
+        info = PROFILE_MAP[next_prof]
+        # Notify
+        subprocess.run([
+            "notify-send", "-t", "3000",
+            "⚡ POWER TELEMETRY // STAGE SHIFT",
+            f"Power Profile Engaged: [{info['tag']}]\n{info['desc']}"
+        ])
+    except Exception as e:
+        print(f"Error setting profile: {e}", file=sys.stderr)
+
+def read_sys_file(path, default=""):
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return default
+
+def get_telemetry():
+    import glob
+    bat_dirs = glob.glob("/sys/class/power_supply/BAT*")
+    bat_dir = bat_dirs[0] if bat_dirs else ""
+    ac_dirs = glob.glob("/sys/class/power_supply/A*")
+    ac_dir = ac_dirs[0] if ac_dirs else ""
+
+    status = read_sys_file(f"{bat_dir}/status", "Full" if not bat_dir else "Discharging")
+    capacity = read_sys_file(f"{bat_dir}/capacity", "100")
+    
+    # Calculate wattage
+    power_now = read_sys_file(f"{bat_dir}/power_now")
+    current_now = read_sys_file(f"{bat_dir}/current_now")
+    voltage_now = read_sys_file(f"{bat_dir}/voltage_now")
+
+    wattage = 0.0
+    if power_now and power_now.isdigit():
+        wattage = float(power_now) / 1000000.0
+    elif current_now and voltage_now and current_now.isdigit() and voltage_now.isdigit():
+        wattage = (float(current_now) * float(voltage_now)) / 1000000000000.0
+
+    voltage_v = float(voltage_now) / 1000000.0 if voltage_now and voltage_now.isdigit() else 0.0
+    
+    ac_online = read_sys_file(f"{ac_dir}/online", "0") == "1"
+    profile_key = get_power_profile()
+    p_info = PROFILE_MAP[profile_key]
+
+    # Pure text formatting (No icons)
+    sign = "+" if status == "Charging" else ("-" if status == "Discharging" else "")
+    watt_str = f"{sign}{wattage:.1f}W" if wattage > 0.05 else ("AC" if ac_online else "0.0W")
+    
+    # Waybar Format: PWR-BUS: 100%
+    text = f"PWR-BUS: {capacity}%"
+    
+    # Tooltip
+    tooltip = (
+        f"⚡ POWER TELEMETRY &amp; FUEL CELLS\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• BATTERY LEVEL   : {capacity}% ({status.upper()})\n"
+        f"• POWER PROFILE   : [{p_info['tag']}] {p_info['desc']}\n"
+        f"• POWER FLOW RATE : {watt_str}\n"
+        f"• BUS VOLTAGE     : {voltage_v:.2f} V\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🖱️ Click to open Flight Indicators &amp; Power Panel"
+    )
+
+    css_class = "normal"
+    try:
+        cap_int = int(capacity)
+        if cap_int <= 15:
+            css_class = "critical"
+        elif cap_int <= 30:
+            css_class = "warning"
+        elif status == "Charging":
+            css_class = "charging"
+    except Exception:
+        pass
+
+    if profile_key == "performance":
+        css_class += " performance"
+    elif profile_key == "power-saver":
+        css_class += " power-saver"
+
+    return {
+        "text": text,
+        "tooltip": tooltip,
+        "class": css_class.strip(),
+        "percentage": int(capacity) if capacity.isdigit() else 100
+    }
+
+def main():
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg in ["--next", "next", "cycle"]:
+            set_next_power_profile()
+            return
+        elif arg in PROFILE_MAP:
+            try:
+                subprocess.run(["powerprofilesctl", "set", arg], check=True)
+                info = PROFILE_MAP[arg]
+                subprocess.run([
+                    "notify-send", "-t", "3000",
+                    "⚡ POWER TELEMETRY // STAGE SHIFT",
+                    f"Power Profile Engaged: [{info['tag']}]\n{info['desc']}"
+                ])
+            except Exception as e:
+                print(f"Error: {e}", file=sys.stderr)
+            return
+
+    data = get_telemetry()
+    print(json.dumps(data))
+
+if __name__ == "__main__":
+    main()

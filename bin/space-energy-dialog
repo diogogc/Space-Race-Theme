@@ -1,0 +1,756 @@
+#!/usr/bin/env python3
+"""
+Apollo Command Module Vertical Needle Indicators & Power Telemetry Console
+Inspired by Apollo CM Main Display Console (MDC) vertical edgewise meters.
+Zero white backgrounds — pure dark chassis, phosphor glows, and precision mechanical needles.
+"""
+import sys, os, subprocess, signal, math, time, re
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+import cairo
+
+PID_FILE = f"/tmp/space-energy-dialog-{os.getuid()}.pid"
+
+def get_session_object_path():
+    try:
+        user = os.environ.get('USER', 'diogo')
+        out = subprocess.check_output(['loginctl', '--no-legend'], text=True).strip()
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == user:
+                sid = parts[0]
+                gout = subprocess.check_output([
+                    'gdbus', 'call', '--system', '--dest', 'org.freedesktop.login1',
+                    '--object-path', '/org/freedesktop/login1',
+                    '--method', 'org.freedesktop.login1.Manager.GetSession', sid
+                ], text=True)
+                m = re.search(r"'([^']+)'", gout)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return '/org/freedesktop/login1/session/auto'
+
+def get_brightness_stats():
+    path = '/sys/class/backlight/intel_backlight'
+    if not os.path.exists(path):
+        base = '/sys/class/backlight'
+        if os.path.exists(base) and os.listdir(base):
+            path = os.path.join(base, os.listdir(base)[0])
+    max_b = 1515
+    cur_b = 600
+    subsys = 'backlight'
+    dev = 'intel_backlight'
+    if os.path.exists(path):
+        dev = os.path.basename(path)
+        try:
+            with open(f'{path}/max_brightness') as f: max_b = int(f.read().strip())
+            with open(f'{path}/brightness') as f: cur_b = int(f.read().strip())
+        except Exception:
+            pass
+    return subsys, dev, cur_b, max_b
+
+def set_screen_brightness(pct, session_path=None):
+    subsys, dev, cur_b, max_b = get_brightness_stats()
+    raw_val = int((pct / 100.0) * max_b)
+    raw_val = max(1, min(max_b, raw_val))
+    if not session_path:
+        session_path = get_session_object_path()
+    
+    cmd = [
+        'gdbus', 'call', '--system', '--dest', 'org.freedesktop.login1',
+        '--object-path', session_path,
+        '--method', 'org.freedesktop.login1.Session.SetBrightness',
+        subsys, dev, str(raw_val)
+    ]
+    subprocess.Popen(cmd)
+
+
+THEMES = {
+    "nasa": {
+        "bg": "#0a0d12",
+        "bg_panel": "#11161f",
+        "bg_bezel": "#070a0e",
+        "track_bg": "#030406",
+        "border": "#ffb000",
+        "border_dim": "#263242",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#768696",
+        "btn_bg": "#0a0d12",
+        "btn_border": "#283444",
+        "btn_hover": "#1e2633",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "yellow": "#ffb000",
+        "red": "#ff3b30",
+        "needle": "#ffb000",
+        "radius": "3px",
+    },
+    "crt-amber": {
+        "bg": "#060709",
+        "bg_panel": "#0d0f14",
+        "bg_bezel": "#040507",
+        "track_bg": "#020304",
+        "border": "#ff9e00",
+        "border_dim": "#402800",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#805200",
+        "btn_bg": "#060709",
+        "btn_border": "#3a2400",
+        "btn_hover": "#221500",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "yellow": "#cca000",
+        "red": "#ff5533",
+        "needle": "#ff9e00",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#040704",
+        "bg_panel": "#0a110a",
+        "bg_bezel": "#030603",
+        "track_bg": "#010301",
+        "border": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#030603",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#0c240c",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "yellow": "#99ff33",
+        "red": "#ff4444",
+        "needle": "#33ff33",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#060e0c",
+        "bg_panel": "#0c1b17",
+        "bg_bezel": "#040908",
+        "track_bg": "#020504",
+        "border": "#48e5c2",
+        "border_dim": "#183d34",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#060d0b",
+        "btn_border": "#1a4037",
+        "btn_hover": "#123028",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "yellow": "#d4e09b",
+        "red": "#ff4860",
+        "needle": "#48e5c2",
+        "radius": "2px",
+    }
+}
+
+PROFILES = [
+    ("power-saver", "01: EMERGENCY", "LOW-POWER DRIFT", "Emergency power conservation / battery saver mode"),
+    ("balanced", "02: COASTING", "NOMINAL ORBITAL FLIGHT", "Balanced energy efficiency & nominal thrust"),
+    ("performance", "03: ORBIT MANEUVER", "FULL THRUST ENGAGED", "Maximum CPU frequency & guidance rate")
+]
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip('#')
+    return tuple(int(hex_str[i:i+2], 16)/255.0 for i in (0, 2, 4))
+
+class ApolloVerticalNeedleGauge(Gtk.DrawingArea):
+    """
+    Authentic Apollo Command Module Vertical Edgewise Meter.
+    Features:
+    - Vertical scale with tick marks & numerical labels
+    - Colored vertical range zones (Nominal / Caution / Emergency)
+    - Moving horizontal mechanical indicator needle with illuminated pointer pointing LEFT (◀)
+    - Digital readout window at the base
+    - Dark matte chassis (Zero white backgrounds)
+    """
+    def __init__(self, title, sub_title, unit, min_val, max_val, pal, gauge_type="battery"):
+        super().__init__()
+        self.set_size_request(190, 260)
+        self.title = title
+        self.sub_title = sub_title
+        self.unit = unit
+        self.min_val = min_val
+        self.max_val = max_val
+        self.current_val = min_val
+        self.display_text = "0.0"
+        self.pal = pal
+        self.gauge_type = gauge_type
+        self.connect("draw", self.on_draw)
+
+    def set_value(self, val, display_text=None):
+        self.current_val = max(self.min_val, min(self.max_val, val))
+        if display_text:
+            self.display_text = display_text
+        else:
+            self.display_text = f"{self.current_val:.1f} {self.unit}"
+        self.queue_draw()
+
+    def on_draw(self, widget, cr):
+        width = self.get_allocated_width()
+        height = self.get_allocated_height()
+
+        # 1. Bezel Enclosure Box (Dark Chassis)
+        cr.save()
+        bez_r, bez_g, bez_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bez_r, bez_g, bez_b)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.fill()
+
+        bord_r, bord_g, bord_b = hex_to_rgb(self.pal["border_dim"])
+        cr.set_source_rgb(bord_r, bord_g, bord_b)
+        cr.set_line_width(1.5)
+        cr.rectangle(2, 2, width - 4, height - 4)
+        cr.stroke()
+
+        # 2. Header Text (Apollo MDC Instrument Label)
+        acc_r, acc_g, acc_b = hex_to_rgb(self.pal["text_main"])
+        dim_r, dim_g, dim_b = hex_to_rgb(self.pal["text_dim"])
+
+        cr.select_font_face("JetBrainsMono Nerd Font", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(9.0)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        ext_t = cr.text_extents(self.title)
+        cr.move_to((width - ext_t.width) / 2.0, 16)
+        cr.show_text(self.title)
+
+        cr.set_font_size(7.2)
+        cr.set_source_rgb(dim_r, dim_g, dim_b)
+        ext_st = cr.text_extents(self.sub_title)
+        cr.move_to((width - ext_st.width) / 2.0, 27)
+        cr.show_text(self.sub_title)
+
+        # 3. Vertical Meter Track
+        track_x = width * 0.48
+        track_y = 36
+        track_w = 22
+        track_h = 162
+
+        # Inlay track background (Pitch Black)
+        tr_r, tr_g, tr_b = hex_to_rgb(self.pal["track_bg"])
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.8)
+        cr.set_line_width(1.0)
+        cr.rectangle(track_x, track_y, track_w, track_h)
+        cr.stroke()
+
+        # 4. Vertical Limit Color Stripes (Nominal, Caution, Emergency)
+        stripe_x = track_x + 2
+        stripe_w = 3.5
+
+        red_r, red_g, red_b = hex_to_rgb(self.pal["red"])
+        yel_r, yel_g, yel_b = hex_to_rgb(self.pal["yellow"])
+        grn_r, grn_g, grn_b = hex_to_rgb(self.pal["green"])
+
+        if self.gauge_type == "battery":
+            # Low / Emergency (bottom 25%)
+            cr.set_source_rgba(red_r, red_g, red_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.75, stripe_w, track_h * 0.25)
+            cr.fill()
+
+            # Caution / Mid (25% to 50%)
+            cr.set_source_rgba(yel_r, yel_g, yel_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.50, stripe_w, track_h * 0.25)
+            cr.fill()
+
+            # Nominal (top 50%)
+            cr.set_source_rgba(grn_r, grn_g, grn_b, 0.85)
+            cr.rectangle(stripe_x, track_y, stripe_w, track_h * 0.50)
+            cr.fill()
+
+        elif self.gauge_type == "voltage":
+            # 0 to 20V: 0-10V low (bottom 50%), 10-11.4V caution (50-57%), 11.4-14.5V nominal (57-72.5%), 14.5-20V high (top 27.5%)
+            cr.set_source_rgba(red_r, red_g, red_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.50, stripe_w, track_h * 0.50)
+            cr.fill()
+
+            cr.set_source_rgba(yel_r, yel_g, yel_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.43, stripe_w, track_h * 0.07)
+            cr.fill()
+
+            cr.set_source_rgba(grn_r, grn_g, grn_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.27, stripe_w, track_h * 0.16)
+            cr.fill()
+
+            cr.set_source_rgba(yel_r, yel_g, yel_b, 0.85)
+            cr.rectangle(stripe_x, track_y, stripe_w, track_h * 0.27)
+            cr.fill()
+
+        else: # wattage
+            # Nominal low wattage (bottom 50%)
+            cr.set_source_rgba(grn_r, grn_g, grn_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.50, stripe_w, track_h * 0.50)
+            cr.fill()
+
+            # Mid wattage (25% to 50% from top)
+            cr.set_source_rgba(yel_r, yel_g, yel_b, 0.85)
+            cr.rectangle(stripe_x, track_y + track_h * 0.25, stripe_w, track_h * 0.25)
+            cr.fill()
+
+            # High draw (top 25%)
+            cr.set_source_rgba(red_r, red_g, red_b, 0.85)
+            cr.rectangle(stripe_x, track_y, stripe_w, track_h * 0.25)
+            cr.fill()
+
+        # 5. Scale Ticks & Numbers (Left side of track)
+        num_ticks = 10
+        for i in range(num_ticks + 1):
+            frac = i / float(num_ticks)
+            tick_y = (track_y + track_h) - (frac * track_h)
+            is_major = (i % 2 == 0)
+
+            tick_len = 7 if is_major else 3.5
+            cr.set_source_rgba(acc_r, acc_g, acc_b, 0.85 if is_major else 0.45)
+            cr.set_line_width(1.5 if is_major else 1.0)
+            cr.move_to(track_x - 2, tick_y)
+            cr.line_to(track_x - 2 - tick_len, tick_y)
+            cr.stroke()
+
+            if is_major:
+                val_at_tick = self.min_val + frac * (self.max_val - self.min_val)
+                lbl_val = f"{int(val_at_tick)}"
+                cr.set_font_size(7.5)
+                ext_val = cr.text_extents(lbl_val)
+                cr.move_to(track_x - 12 - ext_val.width, tick_y + ext_val.height / 2.0)
+                cr.show_text(lbl_val)
+
+        # 6. Moving Mechanical Vertical Needle Indicator
+        val_frac = (self.current_val - self.min_val) / float(self.max_val - self.min_val)
+        val_frac = max(0.0, min(1.0, val_frac))
+        needle_y = (track_y + track_h) - (val_frac * track_h)
+
+        needle_r, needle_g, needle_b = hex_to_rgb(self.pal["needle"])
+        cr.set_source_rgb(needle_r, needle_g, needle_b)
+
+        # Horizontal needle bar extending across the track
+        cr.set_line_width(3.0)
+        cr.move_to(track_x, needle_y)
+        cr.line_to(track_x + track_w, needle_y)
+        cr.stroke()
+
+        # Sharp Triangular Pointer Flag pointing LEFT (◀) directly at the scale ticks
+        cr.move_to(track_x - 7, needle_y)             # Pointed tip facing left scale tick
+        cr.line_to(track_x + 1, needle_y - 5)          # Top base
+        cr.line_to(track_x + 1, needle_y + 5)          # Bottom base
+        cr.close_path()
+        cr.fill()
+
+        # Needle center slit highlight
+        bg_r, bg_g, bg_b = hex_to_rgb(self.pal["bg_bezel"])
+        cr.set_source_rgb(bg_r, bg_g, bg_b)
+        cr.set_line_width(1.0)
+        cr.move_to(track_x + 2, needle_y)
+        cr.line_to(track_x + track_w - 2, needle_y)
+        cr.stroke()
+
+        # 7. Digital Readout Window at Base (Dark Recessed LED Card)
+        readout_y = height - 32
+        readout_w = width - 16
+        readout_h = 22
+        readout_x = 8
+
+        cr.set_source_rgb(tr_r, tr_g, tr_b)
+        cr.rectangle(readout_x, readout_y, readout_w, readout_h)
+        cr.fill()
+
+        cr.set_source_rgba(bord_r, bord_g, bord_b, 0.7)
+        cr.set_line_width(1.0)
+        cr.rectangle(readout_x, readout_y, readout_w, readout_h)
+        cr.stroke()
+
+        cr.set_font_size(9.5)
+        cr.set_source_rgb(acc_r, acc_g, acc_b)
+        ext_d = cr.text_extents(self.display_text)
+        cr.move_to((width - ext_d.width) / 2.0, readout_y + (readout_h + ext_d.height) / 2.0)
+        cr.show_text(self.display_text)
+
+        cr.restore()
+        return False
+
+class SpaceEnergyDialog(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Apollo Command Module Power Telemetry")
+        self.set_wmclass("space-energy-dialog", "space-energy-dialog")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(650, 480)
+
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+        self.profile_buttons = {}
+        self.session_path = get_session_object_path()
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+        # Update telemetry immediately & start live 1s polling
+        self.update_telemetry()
+        GLib.timeout_add(1000, self.update_telemetry)
+
+    def apply_css(self):
+        # Strict zero-white background stylesheet
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+            background-color: transparent;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_panel']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 10px 18px;
+        }}
+        .gauges-card {{
+            background-color: {self.pal['bg_panel']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            padding: 6px;
+        }}
+        button,
+        button.profile-btn {{
+            background-image: none;
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            box-shadow: none;
+            text-shadow: none;
+        }}
+        button.profile-btn:hover {{
+            background-image: none;
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+            box-shadow: none;
+        }}
+        button.profile-btn.active,
+        button.profile-btn.active:hover {{
+            background-image: none;
+            background-color: {self.pal['btn_hover']};
+            border: 2px solid {self.pal['accent']};
+            box-shadow: none;
+        }}
+        button label,
+        button box {{
+            background-color: transparent;
+            background-image: none;
+            box-shadow: none;
+        }}
+        scale trough {{
+            background-color: {self.pal['track_bg']};
+            border: 1px solid {self.pal['border_dim']};
+            border-radius: {self.pal['radius']};
+            min-height: 8px;
+        }}
+        scale highlight {{
+            background-color: {self.pal['accent']};
+            border-radius: {self.pal['radius']};
+        }}
+        scale slider {{
+            background-color: {self.pal['accent']};
+            border: 1px solid {self.pal['border']};
+            border-radius: 2px;
+            min-width: 14px;
+            min-height: 14px;
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(main_vbox)
+
+        # Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🚀 APOLLO COMMAND MODULE // POWER TELEMETRY</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>MDC-02 VERTICAL EDGEWISE INDICATORS // DC MAIN BUS A, VOLTS &amp; B</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        main_vbox.pack_start(header, False, False, 0)
+
+        # Body Container
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(14)
+        body.set_margin_right(14)
+
+        # Trio of Vertical Needle Indicators
+        gauges_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        gauges_card.get_style_context().add_class("gauges-card")
+
+        self.battery_gauge = ApolloVerticalNeedleGauge(
+            "MAIN BUS A", "FUEL CELL CAP", "%", 0.0, 100.0, self.pal, gauge_type="battery"
+        )
+        gauges_card.pack_start(self.battery_gauge, True, True, 0)
+
+        self.voltage_gauge = ApolloVerticalNeedleGauge(
+            "DC BUS VOLTS", "BUS POTENTIAL", "V", 0.0, 20.0, self.pal, gauge_type="voltage"
+        )
+        gauges_card.pack_start(self.voltage_gauge, True, True, 0)
+
+        self.wattage_gauge = ApolloVerticalNeedleGauge(
+            "MAIN BUS B", "POWER RATE", "W", 0.0, 50.0, self.pal, gauge_type="wattage"
+        )
+        gauges_card.pack_start(self.wattage_gauge, True, True, 0)
+
+        body.pack_start(gauges_card, False, False, 0)
+
+        # Profile Switcher Section
+        prof_title = Gtk.Label()
+        prof_title.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['accent']}'>FLIGHT THRUST PROFILE:</span>")
+        prof_title.set_xalign(0.0)
+        body.pack_start(prof_title, False, False, 0)
+
+        # 3 Profile Annunciator Buttons
+        profiles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for p_id, p_tag, p_sub, p_desc in PROFILES:
+            btn = Gtk.Button()
+            btn.get_style_context().add_class("profile-btn")
+
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            lbl_tag = Gtk.Label()
+            lbl_tag.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>[{p_tag}]</span>")
+            lbl_tag.set_xalign(0.0)
+            v.pack_start(lbl_tag, False, False, 0)
+
+            lbl_sub = Gtk.Label()
+            lbl_sub.set_markup(f"<span font_size='7000' foreground='{self.pal['text_dim']}'>{p_sub}</span>")
+            lbl_sub.set_xalign(0.0)
+            v.pack_start(lbl_sub, False, False, 0)
+
+            btn.add(v)
+            btn.connect("clicked", lambda w, pid=p_id: self.select_profile(pid))
+            self.profile_buttons[p_id] = btn
+            profiles_box.pack_start(btn, True, True, 0)
+
+        body.pack_start(profiles_box, False, False, 0)
+
+        # Display Illumination Slider
+        bright_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        b_title = Gtk.Label()
+        b_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_dim']}'>CONSOLE ILLUMINATION:</span>")
+        bright_box.pack_start(b_title, False, False, 0)
+
+        subsys, dev, cur_b, max_b = get_brightness_stats()
+        pct_b = (float(cur_b) / float(max_b)) * 100.0 if max_b > 0 else 50.0
+
+        self.scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 5.0, 100.0, 5.0)
+        self.scale.set_value(pct_b)
+        self.scale.set_value_pos(Gtk.PositionType.RIGHT)
+        self.scale.connect("value-changed", self.on_brightness_changed)
+        bright_box.pack_start(self.scale, True, True, 0)
+
+        body.pack_start(bright_box, False, False, 0)
+
+        main_vbox.pack_start(body, True, True, 0)
+
+        # Footer
+        footer = Gtk.Label()
+        footer.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>[ 1-3 / TAB ] CYCLE PROFILE   [ ESC / Q ] CLOSE CONSOLE</span>")
+        footer.set_margin_bottom(8)
+        main_vbox.pack_start(footer, False, False, 0)
+
+    def update_telemetry(self):
+        bat_dir = "/sys/class/power_supply/BAT0"
+        ac_dir = "/sys/class/power_supply/AC"
+
+        capacity_str = "100"
+        status = "NOMINAL"
+        ac_online = False
+        wattage = 0.0
+        voltage_v = 0.0
+
+        if os.path.exists(bat_dir):
+            try:
+                with open(f"{bat_dir}/capacity") as f: capacity_str = f.read().strip()
+                with open(f"{bat_dir}/status") as f: status = f.read().strip().upper()
+                
+                power_now = ""
+                if os.path.exists(f"{bat_dir}/power_now"):
+                    with open(f"{bat_dir}/power_now") as f: power_now = f.read().strip()
+                current_now = ""
+                if os.path.exists(f"{bat_dir}/current_now"):
+                    with open(f"{bat_dir}/current_now") as f: current_now = f.read().strip()
+                voltage_now = ""
+                if os.path.exists(f"{bat_dir}/voltage_now"):
+                    with open(f"{bat_dir}/voltage_now") as f: voltage_now = f.read().strip()
+
+                if power_now and power_now.isdigit():
+                    wattage = float(power_now) / 1000000.0
+                elif current_now and voltage_now and current_now.isdigit() and voltage_now.isdigit():
+                    wattage = (float(current_now) * float(voltage_now)) / 1000000000000.0
+
+                if voltage_now and voltage_now.isdigit():
+                    voltage_v = float(voltage_now) / 1000000.0
+            except Exception:
+                pass
+
+        if os.path.exists(ac_dir):
+            try:
+                with open(f"{ac_dir}/online") as f:
+                    ac_online = (f.read().strip() == "1")
+            except Exception:
+                pass
+
+        # Update all 3 gauges
+        cap_val = float(capacity_str) if capacity_str.isdigit() else 100.0
+        self.battery_gauge.set_value(cap_val, f"{int(cap_val)}% | {status}")
+
+        self.voltage_gauge.set_value(voltage_v, f"{voltage_v:.2f} VDC")
+
+        if ac_online and wattage < 0.1:
+            self.wattage_gauge.set_value(0.0, "AC BUS")
+        else:
+            prefix = "+" if status == "CHARGING" else "-"
+            self.wattage_gauge.set_value(wattage, f"{prefix}{wattage:.1f} W")
+
+        # Update active profile button styles
+        try:
+            curr_prof = subprocess.check_output(["powerprofilesctl", "get"], text=True).strip()
+        except Exception:
+            curr_prof = "balanced"
+
+        for pid, btn in self.profile_buttons.items():
+            ctx = btn.get_style_context()
+            if pid == curr_prof:
+                ctx.add_class("active")
+            else:
+                ctx.remove_class("active")
+
+        return True
+
+    def on_brightness_changed(self, scale):
+        val = int(scale.get_value())
+        set_screen_brightness(val, self.session_path)
+
+    def select_profile(self, pid):
+        subprocess.run(["powerprofilesctl", "set", pid])
+        self.update_telemetry()
+        subprocess.run([
+            "notify-send", "-t", "3000",
+            "POWER TELEMETRY // STAGE SHIFT",
+            f"Power Profile Engaged: {pid.upper()}"
+        ])
+
+    def cycle_next_profile(self):
+        try:
+            curr = subprocess.check_output(["powerprofilesctl", "get"], text=True).strip()
+        except Exception:
+            curr = "balanced"
+        
+        cycle_map = {
+            "power-saver": "balanced",
+            "balanced": "performance",
+            "performance": "power-saver"
+        }
+        nxt = cycle_map.get(curr, "balanced")
+        self.select_profile(nxt)
+
+    def on_key_press(self, widget, event):
+        keyname = Gdk.keyval_name(event.keyval)
+        if keyname in ["Escape", "q", "Q"]:
+            self.close_window()
+            return True
+        elif keyname in ["Tab", "space", "c", "C"]:
+            self.cycle_next_profile()
+            return True
+        elif keyname in ["1", "e", "E"]:
+            self.select_profile("power-saver")
+            return True
+        elif keyname in ["2", "b", "B"]:
+            self.select_profile("balanced")
+            return True
+        elif keyname in ["3", "p", "P"]:
+            self.select_profile("performance")
+            return True
+        return False
+
+    def close_window(self):
+        cleanup()
+        self.hide()
+        Gtk.main_quit()
+
+def main():
+    check_singleton()
+    win = SpaceEnergyDialog()
+    win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

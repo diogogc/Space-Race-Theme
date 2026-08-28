@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=COMMS & Telemetry Uplink
+GenericName=Network & Comms Console
+Comment=Apollo Mission Control S-Band RF Transceiver, Umbilical Hardwire, VPN, Bluetooth & DNS Ground Station
+Exec=/home/diogo/.local/bin/space-network-dialog
+Icon=network-wireless
+Terminal=false
+Type=Application
+Categories=Network;System;Settings;
+Keywords=network;wifi;ethernet;vpn;bluetooth;dns;speedtest;comm;comms;telemetry;
+StartupWMClass=space-network-dialog

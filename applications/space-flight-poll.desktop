@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Flight Readiness Poll Console
+GenericName=Subsystem Telemetry & Readiness Poll
+Comment=Apollo Mission Control Subsystem Go / No-Go Flight Readiness Poll
+Icon=utilities-terminal
+Exec=kitty -e /home/diogo/.local/bin/space-flight-poll
+Terminal=false
+Categories=Utility;System;
+StartupWMClass=space-flight-poll

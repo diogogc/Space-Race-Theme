@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Apollo Mission Control - System Lifecycle & Flight Poll Installer
+set -e
+
+if [ "$EUID" -ne 0 ]; then
+    echo -e "\033[1;33m[!] Elevated permissions required. Running via sudo...\033[0m"
+    exec sudo bash "$0" "$@"
+fi
+
+REAL_USER="${SUDO_USER:-$USER}"
+REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+
+echo -e "\033[1;36m>>> [01/04] Updating /boot/limine/limine.conf...\033[0m"
+if [ -f /boot/limine/limine.conf ] && [ -f "$REAL_HOME/.config/limine/limine.conf" ]; then
+    cp -v /boot/limine/limine.conf /boot/limine/limine.conf.bak-$(date +%Y%m%d%H%M%S) 2>/dev/null || true
+    cp -v "$REAL_HOME/.config/limine/limine.conf" /boot/limine/limine.conf
+fi
+
+echo -e "\033[1;36m>>> [02/04] Installing & Enabling space-flight-poll.service (Boot)... \033[0m"
+if [ -f "$REAL_HOME/.config/systemd/space-flight-poll.service" ]; then
+    cp -v "$REAL_HOME/.config/systemd/space-flight-poll.service" /etc/systemd/system/space-flight-poll.service
+fi
+
+echo -e "\033[1;36m>>> [03/04] Installing & Enabling space-flight-shutdown.service (Shutdown & Reboot)... \033[0m"
+if [ -f "$REAL_HOME/.config/systemd/space-flight-shutdown.service" ]; then
+    cp -v "$REAL_HOME/.config/systemd/space-flight-shutdown.service" /etc/systemd/system/space-flight-shutdown.service
+fi
+
+echo -e "\033[1;36m>>> [04/04] Installing /usr/lib/systemd/system-shutdown hook... \033[0m"
+mkdir -p /usr/lib/systemd/system-shutdown
+if [ -f "$REAL_HOME/.config/systemd/apollo-flight-shutdown.shutdown" ]; then
+    cp -v "$REAL_HOME/.config/systemd/apollo-flight-shutdown.shutdown" /usr/lib/systemd/system-shutdown/apollo-flight-shutdown.shutdown
+    chmod 755 /usr/lib/systemd/system-shutdown/apollo-flight-shutdown.shutdown
+fi
+
+systemctl daemon-reload
+systemctl enable space-flight-poll.service
+systemctl enable space-flight-shutdown.service
+
+echo -e "\033[1;32m>>> ALL SUBSYSTEMS ARMED FOR APOLLO LIFECYCLE (BOOT, REBOOT & SHUTDOWN). <<<\033[0m"
+

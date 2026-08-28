@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Apollo Mission Theme Selector
+GenericName=Theme Switcher
+Comment=Cycle Apollo Mission Control Themes (NASA, CRT-Amber, CRT-Green, Kosmos-VFD)
+Exec=/home/diogo/.local/bin/space-theme-switch next
+Icon=preferences-desktop-theme
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;
+Keywords=theme;space;apollo;nasa;crt;amber;green;kosmos;vfd;

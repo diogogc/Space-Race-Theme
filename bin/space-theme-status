@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+theme_file="$HOME/.config/themes/current_theme"
+current_theme="nasa"
+[[ -f "$theme_file" ]] && current_theme=$(cat "$theme_file" 2>/dev/null || echo "nasa")
+
+case "$current_theme" in
+  "nasa")
+    label="NASA"
+    desc="NASA Flight Operations (Console Slate + DSKY Amber)"
+    ;;
+  "crt-amber")
+    label="CRT-AMBER"
+    desc="IBM / DEC Mainframe Phosphor Amber CRT (590nm Glow)"
+    ;;
+  "crt-green")
+    label="CRT-GREEN"
+    desc="DEC VT100 / P1 Phosphor Green CRT (525nm Glow)"
+    ;;
+  "kosmos-vfd")
+    label="KOSMOS-VFD"
+    desc="Soviet Space Program Vostok/Soyuz (Teal + VFD Mint Cyan)"
+    ;;
+  *)
+    label="${current_theme^^}"
+    desc="Mission Profile: $current_theme"
+    ;;
+esac
+
+tooltip=$(printf 'MISSION PROFILE: %s\\n------------------------------\\n%s\\n\\n💡 Left-click: Cycle to next profile\\n💡 Keybind: SUPER + SHIFT + T' "$label" "$desc")
+
+printf '{"text":"[ %s ]","tooltip":"%s","class":"%s"}\n' "$label" "$tooltip" "$current_theme"

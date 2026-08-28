@@ -1,0 +1,134 @@
+{
+    "layer": "top",
+    "position": "top",
+    "exclusive": true,
+    "passthrough": false,
+    "spacing": 6,
+    "margin-top": 4,
+    "margin-left": 8,
+    "margin-right": 8,
+    
+    "modules-left": [
+        "custom/theme",
+        "hyprland/workspaces",
+        "hyprland/window"
+    ],
+    "modules-center": [
+        "custom/telemetry"
+    ],
+    "modules-right": [
+        "custom/iss",
+        "custom/met",
+        "pulseaudio",
+        "custom/network-telemetry",
+        "custom/power-telemetry",
+        "custom/power"
+        // "tray" // Uncomment to restore default systray applet icons (e.g. nm-applet, blueman)
+    ],
+
+
+
+    "custom/theme": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-theme-status",
+        "return-type": "json",
+        "interval": 2,
+        "on-click": "$HOME/.local/bin/space-theme-switch next",
+        "on-click-right": "$HOME/.local/bin/space-theme-switch prev",
+        "tooltip": true
+    },
+
+    "custom/iss": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-iss-telemetry",
+        "return-type": "json",
+        "interval": 2,
+        "tooltip": true,
+        "on-click": "$HOME/.local/bin/space-iss-dialog",
+        "on-click-right": "$HOME/.local/bin/spaceera-iss-tracker --fetch-tle"
+    },
+
+    "hyprland/workspaces": {
+        "disable-scroll": false,
+        "all-outputs": true,
+        "format": "{name}",
+        "on-click": "activate"
+    },
+
+    "hyprland/window": {
+        "format": "{}",
+        "max-length": 40,
+        "separate-outputs": true
+    },
+
+    "custom/telemetry": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-telemetry",
+        "return-type": "json",
+        "interval": 2,
+        "tooltip": true,
+        "on-click": "$HOME/.local/bin/space-telemetry-dialog",
+        "on-click-right": "$HOME/.local/bin/space-telemetry-dialog"
+    },
+
+    "custom/met": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-met",
+        "return-type": "json",
+        "interval": 1,
+        "tooltip": true
+    },
+
+    "pulseaudio": {
+        "format": "VOL {volume}%",
+        "format-muted": "VOL MUTED",
+        "format-icons": {
+            "default": ["", "", ""]
+        },
+        "tooltip-format": "🎙️ APOLLO CAPCOM &amp; INTERCOM AUDIO CONSOLE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• OUTPUT LEVEL : {volume}%\n• ENDPOINT     : {desc}\n• Click        : Open CAPCOM Console (SUPER+SHIFT+V)\n• Right-Click  : Quick Mute Toggle",
+        "on-click": "$HOME/.local/bin/space-capcom-dialog",
+        "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+        "scroll-step": 5
+    },
+
+    "custom/network-telemetry": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-network-telemetry",
+        "return-type": "json",
+        "interval": 2,
+        "tooltip": true,
+        "on-click": "$HOME/.local/bin/space-network-dialog",
+        "on-click-right": "$HOME/.local/bin/space-network-dialog"
+    },
+
+    "custom/power-telemetry": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-power-telemetry",
+        "return-type": "json",
+        "interval": 2,
+        "tooltip": true,
+        "on-click": "$HOME/.local/bin/space-energy-dialog",
+        "on-click-right": "$HOME/.local/bin/space-energy-dialog"
+    },
+
+
+
+    "clock": {
+        "format": "{:%H:%M:%S LOC}",
+        "interval": 1,
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+    },
+
+    // "tray": {
+    //     "icon-size": 16,
+    //     "spacing": 8
+    // },
+
+    "custom/power": {
+        "format": "[ ⏻ OPP ]",
+        "tooltip": true,
+        "tooltip-format": "Apollo Flight Operations Menu (SUPER + SHIFT + M)\nClick: Open Operations Dispatch (Shutdown, Reboot, Suspend, Lock, Logout)\nRight-Click: Lock Screen",
+        "on-click": "$HOME/.local/bin/space-power-menu",
+        "on-click-right": "command -v hyprlock >/dev/null 2>&1 && hyprlock || (command -v swaylock >/dev/null 2>&1 && swaylock || loginctl lock-session)"
+    }
+}

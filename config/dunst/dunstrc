@@ -1,0 +1,48 @@
+[global]
+    font = JetBrainsMono Nerd Font 10
+    allow_markup = yes
+    format = "<b>%s</b>\n%b"
+    sort = yes
+    indicate_hidden = yes
+    alignment = left
+    show_age_threshold = 60
+    word_wrap = yes
+    ignore_newline = no
+    geometry = "360x10-20+45"
+    transparency = 10
+    idle_threshold = 120
+    monitor = 0
+    follow = mouse
+    sticky_history = yes
+    history_length = 20
+    show_indicators = yes
+    line_height = 0
+    separator_height = 2
+    padding = 12
+    horizontal_padding = 14
+    separator_color = "#263040"
+    startup_notification = false
+    dmenu = /usr/bin/wofi -d
+    browser = /usr/bin/firefox
+    icon_position = left
+    min_icon_size = 24
+    max_icon_size = 48
+    corner_radius = 4
+
+[urgency_low]
+    background = "#14171d"
+    foreground = "#e2e8f0"
+    frame_color = "#2ef788"
+    timeout = 4
+
+[urgency_normal]
+    background = "#14171d"
+    foreground = "#ffb000"
+    frame_color = "#ffb000"
+    timeout = 6
+
+[urgency_critical]
+    background = "#1f1414"
+    foreground = "#ff4444"
+    frame_color = "#ff3333"
+    timeout = 0

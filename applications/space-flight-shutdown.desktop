@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Flight De-orbit & Shutdown Console
+GenericName=Subsystem De-energization Poll
+Comment=Apollo Mission Control Subsystem Shutdown & De-orbit Poll
+Icon=system-shutdown
+Exec=kitty --class space-flight-shutdown -e /home/diogo/.local/bin/space-flight-poll --simulate-shutdown
+Terminal=false
+Categories=Utility;System;
+StartupWMClass=space-flight-shutdown

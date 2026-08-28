@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Keybinding Flight Directory
+GenericName=Space Mission Keyboard Cheatsheet
+Comment=Searchable directory of Hyprland shortcuts and space flight controls
+Exec=space-keybinds
+Icon=preferences-desktop-keyboard-shortcuts
+Terminal=false
+Categories=Utility;Settings;
+Keywords=keybinds;shortcuts;guide;cheatsheet;keys;hotkeys;

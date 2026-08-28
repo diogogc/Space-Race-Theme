@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ISS Mission Control Console
+GenericName=International Space Station Tracker
+Comment=Real-time ISS orbital telemetry, world map, and pass predictions
+Exec=space-iss-dialog
+Icon=preferences-system-network
+Terminal=false
+Categories=Utility;Science;Education;
+Keywords=iss;space;tracker;orbit;telemetry;nasa;

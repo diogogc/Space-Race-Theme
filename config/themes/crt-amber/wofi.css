@@ -1,0 +1,67 @@
+/* IBM / DEC Phosphor Amber CRT Wofi Style */
+window {
+    margin: 0px;
+    background-color: rgba(6, 7, 9, 0.98);
+    border: 2px solid #ff9e00;
+    border-radius: 0px;
+    font-family: 'JetBrainsMono Nerd Font', 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    box-shadow: 0 0 16px rgba(255, 158, 0, 0.35);
+}
+
+#outer-box {
+    margin: 8px;
+    background-color: transparent;
+}
+
+#input {
+    margin: 4px 4px 10px 4px;
+    padding: 8px 12px;
+    border: 1px solid #402800;
+    border-radius: 0px;
+    color: #ff9e00;
+    background-color: #030405;
+    font-weight: bold;
+    text-shadow: 0 0 4px rgba(255, 158, 0, 0.5);
+}
+
+#input:focus {
+    border: 1px solid #ff9e00;
+    box-shadow: 0 0 8px rgba(255, 158, 0, 0.4);
+}
+
+#inner-box {
+    margin: 2px;
+    background-color: #090b0e;
+    border: 1px solid #402800;
+    border-radius: 0px;
+}
+
+#scroll {
+    margin: 0px;
+    background-color: transparent;
+}
+
+#text {
+    margin: 4px 8px;
+    color: #c77c00;
+}
+
+#entry {
+    padding: 6px 10px;
+    margin: 1px 0px;
+    border-radius: 0px;
+    background-color: transparent;
+    border-left: 2px solid transparent;
+}
+
+#entry:selected {
+    background-color: #261908;
+    border-left: 2px solid #ff9e00;
+}
+
+#entry:selected #text {
+    color: #ff9e00;
+    font-weight: bold;
+    text-shadow: 0 0 6px rgba(255, 158, 0, 0.8);
+}

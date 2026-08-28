@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Space Mission Screensaver
+Comment=8-Bit Arch Spacecraft Earth Orbital Screensaver (23° Inclination)
+Exec=space-screensaver
+Icon=preferences-desktop-screensaver
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=screensaver;space;orbit;arch;8bit;apollo;

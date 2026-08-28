@@ -1,0 +1,90 @@
+/* Waybar Space Mission Control Base Style */
+@import url("theme-current.css");
+
+* {
+    font-family: "JetBrains Mono", "IBM Plex Mono", "Terminus", "DejaVu Sans Mono", monospace;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 0px;
+}
+
+window#waybar {
+    border-radius: 0px;
+    transition: all 0.3s ease;
+}
+
+#custom-theme,
+#workspaces,
+#window,
+#custom-telemetry,
+#custom-iss,
+#custom-met,
+#pulseaudio,
+#network,
+#custom-network-telemetry,
+#custom-power-telemetry,
+#clock,
+#custom-power,
+#tray {
+    padding: 2px 10px;
+    margin: 3px 2px;
+    transition: all 0.2s ease;
+}
+
+#custom-power {
+    font-weight: bold;
+    margin-left: 4px;
+}
+
+#custom-network-telemetry {
+    min-width: 82px;
+}
+
+#custom-theme {
+    font-weight: bold;
+}
+
+#workspaces {
+    padding: 0px 4px;
+}
+
+#workspaces button {
+    padding: 2px 8px;
+    margin: 2px 1px;
+    border-radius: 0px;
+    transition: all 0.2s ease;
+}
+
+#custom-telemetry.warning {
+    color: #ff5555;
+    animation: blink 1s infinite alternate;
+}
+
+#custom-power-telemetry.warning {
+    color: #ffaa00;
+}
+
+#custom-power-telemetry.critical {
+    color: #ff3333;
+    animation: blink 1s infinite alternate;
+}
+
+
+tooltip {
+    background-color: rgba(20, 23, 29, 0.96);
+    border: 1px solid #ffb000;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+tooltip label {
+    color: #e2e8f0;
+    font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-weight: normal;
+}
+
+@keyframes blink {
+    from { opacity: 1.0; }
+    to { opacity: 0.6; }
+}

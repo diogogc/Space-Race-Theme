@@ -1,0 +1,19 @@
+# Build Artifacts & Binaries
+src/*.o
+bin/hyprland-ipc-bridge
+bin/space-idle-daemon
+
+# Runtime Telemetry Caches & Stat Files
+*.stat
+*.cache
+__pycache__/
+*.py[cod]
+
+# Logs & Sockets
+*.log
+*.sock
+
+# OS Generated
+.DS_Store
+.directory
+*~

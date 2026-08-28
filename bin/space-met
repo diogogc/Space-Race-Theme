@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Read uptime for Mission Elapsed Time (MET)
+uptime_raw=$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)
+uptime_sec=${uptime_raw%.*}
+
+d=$((uptime_sec / 86400))
+h=$(( (uptime_sec % 86400) / 3600 ))
+m=$(( (uptime_sec % 3600) / 60 ))
+s=$((uptime_sec % 60))
+
+met=$(printf '%02dd %02d:%02d:%02d' "$d" "$h" "$m" "$s")
+met_short=$(printf 'MET +%02d:%02d:%02d' "$h" "$m" "$s")
+loc_time=$(date +'%H:%M:%S LOC')
+local_full=$(date +'%Y-%m-%d %H:%M:%S %Z')
+utc_full=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+
+printf '{"text":"%s | %s","tooltip":"🛰️ MISSION ELAPSED TIME : %s\\n📍 LOCAL TIME          : %s\\n🌐 UTC (ZULU) TIME     : %s\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n✅ FLIGHT OPERATIONS   : NOMINAL","class":"met-active"}\n' \
+  "$met_short" "$loc_time" "$met" "$local_full" "$utc_full"
