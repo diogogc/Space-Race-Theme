@@ -22,6 +22,26 @@ path=(
 )
 export PATH
 
+# Module & Function Paths for Zsh (supporting both user-local and system packages)
+typeset -U module_path MODULE_PATH
+module_path=(
+    "$HOME/.local/lib/zsh/${ZSH_VERSION:-5.9.2}"
+    "/usr/lib/zsh/${ZSH_VERSION:-5.9.2}"
+    $module_path
+)
+
+fpath=(
+    "$HOME/.local/share/zsh/functions"
+    "$HOME/.local/share/zsh/functions/"*(N/)
+    "$HOME/.local/share/zsh/${ZSH_VERSION:-5.9.2}/functions"
+    "$HOME/.local/share/zsh/${ZSH_VERSION:-5.9.2}/functions/"*(N/)
+    "$HOME/.local/share/zsh/site-functions"
+    "/usr/share/zsh/site-functions"
+    "/usr/share/zsh/${ZSH_VERSION:-5.9.2}/functions"
+    $fpath
+)
+export fpath module_path
+
 # Local Shared Library Path (for user-installed binaries)
 if [[ -d "$HOME/.local/lib" ]]; then
     export LD_LIBRARY_PATH="$HOME/.local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
