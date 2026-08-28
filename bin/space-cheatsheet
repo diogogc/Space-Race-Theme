@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""
+=============================================================================
+ 🧭 SPACE RACE MISSION CONTROL: TERMINAL CHEATSHEET & FLIGHT MANUAL
+=============================================================================
+ Interactive & categorized CLI cheatsheet for Zsh, Hyprland, Space Tools,
+ and Arch Linux Administration.
+=============================================================================
+"""
+
+import sys
+import os
+
+# ANSI Color Definitions (Apollo 1969 Palette)
+AMBER = "\033[38;2;255;176;0m"
+BRIGHT_AMBER = "\033[38;2;255;209;102m"
+GREEN = "\033[38;2;46;247;136m"
+BRIGHT_GREEN = "\033[38;2;81;250;159m"
+CYAN = "\033[38;2;0;210;255m"
+BLUE = "\033[38;2;69;123;157m"
+RED = "\033[38;2;230;57;70m"
+MUTED = "\033[38;2;118;134;150m"
+WHITE = "\033[38;2;226;232;240m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RESET = "\033[0m"
+
+SECTIONS = {
+    "zsh": {
+        "title": "🐚 ZSH & LINE EDITOR KEYBINDINGS",
+        "color": GREEN,
+        "items": [
+            ("Ctrl + Space", "Accept full ghost text autosuggestion"),
+            ("Right Arrow (→)", "Accept suggestion / move forward"),
+            ("Tab", "Open interactive completion menu (navigate with arrows)"),
+            ("Shift + Tab", "Cycle backward in completion menu"),
+            ("Up Arrow (↑)", "Prefix history search backward (matches typed text)"),
+            ("Down Arrow (↓)", "Prefix history search forward"),
+            ("Ctrl + R", "Incremental fuzzy history search"),
+            ("Ctrl + ← / Alt + B", "Jump one word backward"),
+            ("Ctrl + → / Alt + F", "Jump one word forward"),
+            ("Home / Ctrl + A", "Jump to beginning of line"),
+            ("End / Ctrl + E", "Jump to end of line"),
+            ("Ctrl + W", "Delete previous word"),
+            ("Alt + D", "Delete next word"),
+            ("Ctrl + U", "Cut line before cursor"),
+            ("Ctrl + K", "Cut line after cursor"),
+            ("Ctrl + Y", "Paste (yank) cut text"),
+            ("Ctrl + _", "Undo last edit action"),
+            ("Space <command>", "SECRET MODE: Run command without saving to history"),
+            ("Ctrl + L", "Clear terminal viewport"),
+            ("Ctrl + C", "Abort / cancel current command input"),
+        ]
+    },
+    "tree": {
+        "title": "🌲 DIRECTORY & FILE TREE COMMANDS",
+        "color": CYAN,
+        "items": [
+            ("tree", "Recursively display full folder hierarchy with icons"),
+            ("ltree", "Display directory tree up to 2 levels deep (--level=2)"),
+            ("ltree3", "Display directory tree up to 3 levels deep (--level=3)"),
+            ("tree <path>", "Display folder hierarchy for a specific directory"),
+            ("tree -a -L 2", "Show hidden/dotfiles in tree"),
+            ("tree -D -L 2", "Only show directories (hide regular files)"),
+            ("tree -l --git -L 2", "Display file permissions, sizes, and Git state"),
+            ("tree -I 'pattern' -L 2", "Ignore matching directory patterns"),
+            ("ls / ll / la", "Modern colorized directory listings with Git badges"),
+        ]
+    },
+    "space": {
+        "title": "🚀 SPACE RACE MISSION SHORTCUTS & TOOLS",
+        "color": AMBER,
+        "items": [
+            ("theme [name]", "Switch mission profile (nasa, crt-amber, crt-green, kosmos-vfd)"),
+            ("fetch", "Display Fastfetch avionics & system telemetry matrix"),
+            ("dsky", "Open Apollo AGC DSKY Mission Application Launcher"),
+            ("telemetry", "Open live telemetry, CPU/MEM & process abort dialog"),
+            ("quindar", "Play authentic Apollo 2524 Hz Quindar telemetry beep"),
+            ("capcom", "Open CAPCOM communications, mic gain & dual VU meters"),
+            ("iss", "Open real-time ISS Orbital Tracker & crew telemetry"),
+            ("network", "Open S-Band radar, Wi-Fi telemetry & speed benchmark"),
+            ("power", "Open flight abort & ACPI power management menu"),
+            ("keys", "Display this mission cheatsheet in terminal"),
+        ]
+    },
+    "hypr": {
+        "title": "🪟 HYPRLAND DESKTOP KEYBINDINGS",
+        "color": BLUE,
+        "items": [
+            ("SUPER + Space", "Open Apollo DSKY Application Launcher"),
+            ("SUPER + V", "Open Flight Theme Selector Modal"),
+            ("SUPER + SHIFT + O", "Launch 8-Bit Orbital Screensaver (Instant Play)"),
+            ("SUPER + SHIFT + P", "Screensaver & Idle Timeout Settings"),
+            ("SUPER + SHIFT + K", "Open Graphical Keybinding Guide Modal"),
+            ("SUPER + SHIFT + M", "Emergency Flight Abort / Power Menu"),
+            ("SUPER + L", "Lock Screen (Apollo DSKY Security Lock)"),
+            ("SUPER + Return / T", "Launch Mission Terminal (Kitty)"),
+            ("SUPER + Q", "Close / kill active flight window"),
+            ("SUPER + F", "Toggle fullscreen window"),
+            ("SUPER + [1 - 9]", "Switch to Workspace 1 through 9"),
+            ("SUPER + SHIFT + [1-9]", "Move active window to Workspace 1..9"),
+            ("SUPER + S", "Toggle special scratchpad workspace"),
+            ("SUPER + SHIFT + S", "Send active window to scratchpad"),
+        ]
+    },
+    "sys": {
+        "title": "🐧 ARCH LINUX SYSADMIN SHORTCUTS",
+        "color": RED,
+        "items": [
+            ("pacup", "Full system rolling synchronization (sudo pacman -Syu)"),
+            ("orphans", "List orphaned packages (pacman -Qdtq)"),
+            ("pacclean", "Safe cleanup of unused orphan packages"),
+            ("mirrorup", "Optimize pacman mirrorlist using reflector"),
+            ("syscheck", "Run systemd boot diagnostics & analyze top blames"),
+            ("pacman -Ss <pkg>", "Search official repositories for package"),
+            ("pacman -Qi <pkg>", "Inspect installed package metadata & dependencies"),
+            ("journalctl -p 3 -xb", "View system logs with priority Error or higher"),
+        ]
+    }
+}
+
+def print_banner():
+    banner = f"""{AMBER}{BOLD}
+   ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  🛸 SPACE RACE MISSION CONTROL // FLIGHT MANUAL & CHEATSHEET             ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝{RESET}
+   {MUTED}Usage: {WHITE}cheatsheet {MUTED}[zsh | tree | space | hypr | sys | all]{RESET}
+"""
+    print(banner)
+
+def print_section(sec_id, sec_data):
+    color = sec_data["color"]
+    title = sec_data["title"]
+    items = sec_data["items"]
+
+    header = f"   {color}{BOLD}┌── {title} {'─' * (68 - len(title))}┐{RESET}"
+    footer = f"   {color}{BOLD}└──{'─' * 70}┘{RESET}"
+
+    print(header)
+    for key, desc in items:
+        # Pad key nicely
+        key_str = f"{BRIGHT_AMBER}{BOLD}{key:<24}{RESET}"
+        desc_str = f"{WHITE}{desc}{RESET}"
+        print(f"   {color}│{RESET}  {key_str} {MUTED}⫸{RESET} {desc_str:<44} {color}│{RESET}")
+    print(footer + "\n")
+
+def main():
+    arg = (sys.argv[1] if len(sys.argv) > 1 else "all").lower().strip("-")
+
+    print_banner()
+
+    if arg in SECTIONS:
+        print_section(arg, SECTIONS[arg])
+    elif arg in ("all", "help", ""):
+        for sec_id, sec_data in SECTIONS.items():
+            print_section(sec_id, sec_data)
+    else:
+        # Search query across all shortcuts
+        query = arg.lower()
+        matches = []
+        for sec_id, sec_data in SECTIONS.items():
+            for key, desc in sec_data["items"]:
+                if query in key.lower() or query in desc.lower():
+                    matches.append((sec_data["title"], key, desc))
+
+        if matches:
+            print(f"   {GREEN}{BOLD}🔍 Search Results for: '{query}'{RESET}\n")
+            for title, key, desc in matches:
+                print(f"   {AMBER}[{title}]{RESET} {BRIGHT_AMBER}{BOLD}{key:<22}{RESET} {MUTED}⫸{RESET} {WHITE}{desc}{RESET}")
+            print()
+        else:
+            print(f"   {RED}No shortcuts found matching '{query}'. Showing full cheatsheet:{RESET}\n")
+            for sec_id, sec_data in SECTIONS.items():
+                print_section(sec_id, sec_data)
+
+if __name__ == "__main__":
+    main()

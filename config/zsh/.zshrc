@@ -167,6 +167,10 @@ alias capcom="space-capcom-dialog"
 alias iss="space-iss-dialog"
 alias network="space-network-dialog"
 alias power="space-power-menu"
+alias cheatsheet="space-cheatsheet"
+alias cheat="space-cheatsheet"
+alias keys="space-cheatsheet"
+alias guide="space-cheatsheet"
 
 # Terminal & Navigation
 if command -v eza &>/dev/null; then

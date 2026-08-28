@@ -58,6 +58,7 @@ BINARIES=(
     "hyprland-ipc-bridge"
     "space-boot-install"
     "space-capcom-dialog"
+    "space-cheatsheet"
     "space-default-apps"
     "space-energy-dialog"
     "space-flight-poll"
