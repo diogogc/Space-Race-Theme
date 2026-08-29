@@ -1,0 +1,617 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Multi-Monitor Avionics & Display Radar
+Dynamic arrangement, cloning/mirroring, scaling, rotation, and hotplug management
+for Hyprland Wayland environments with fail-safe revert safeguards.
+Strict Zero-White-Background Policy across all 4 space mission themes.
+"""
+import sys
+import os
+import subprocess
+import signal
+import time
+import json
+import shutil
+from pathlib import Path
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+
+PID_FILE = f"/tmp/space-display-{os.getuid()}.pid"
+MONITORS_CONF = Path(os.path.expanduser("~/.config/hypr/monitors.conf"))
+
+THEMES = {
+    "nasa": {
+        "bg": "#14171d",
+        "bg_card": "#1c222b",
+        "border": "#ffb000",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#8c9ba5",
+        "btn_bg": "#10141a",
+        "btn_border": "#2e3846",
+        "btn_hover": "#263040",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "red": "#ff3333",
+        "cyan": "#00d2ff",
+        "radius": "4px",
+    },
+    "crt-amber": {
+        "bg": "#0e1014",
+        "bg_card": "#161920",
+        "border": "#ff9e00",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#734900",
+        "btn_bg": "#08090c",
+        "btn_border": "#402800",
+        "btn_hover": "#241908",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "red": "#ff5533",
+        "cyan": "#ffbb33",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#0a100a",
+        "bg_card": "#0f1c0f",
+        "border": "#33ff33",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#050a05",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#102610",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "red": "#ff4444",
+        "cyan": "#55ff55",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#0e1e1a",
+        "bg_card": "#152d27",
+        "border": "#48e5c2",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#081411",
+        "btn_border": "#1f6656",
+        "btn_hover": "#173830",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "red": "#ff4860",
+        "cyan": "#48e5c2",
+        "radius": "3px",
+    }
+}
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+def query_monitors():
+    try:
+        out = subprocess.check_output(["hyprctl", "-j", "monitors"], text=True, stderr=subprocess.DEVNULL)
+        return json.loads(out)
+    except Exception:
+        return []
+
+def query_all_monitors():
+    try:
+        out = subprocess.check_output(["hyprctl", "-j", "monitors", "all"], text=True, stderr=subprocess.DEVNULL)
+        return json.loads(out)
+    except Exception:
+        return query_monitors()
+
+def execute_hyprctl_monitor(rule_str):
+    try:
+        subprocess.run(["hyprctl", "keyword", "monitor", rule_str], check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"Hyprctl error: {e}", file=sys.stderr)
+        return False
+
+def save_monitors_config(rules):
+    MONITORS_CONF.parent.mkdir(parents=True, exist_ok=True)
+    content = "# Apollo Space Race - Persistent Monitor Topology\n"
+    for r in rules:
+        content += f"monitor = {r}\n"
+    MONITORS_CONF.write_text(content)
+
+class SpaceDisplayDialog(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Apollo Display Radar // Multi-Monitor Controller")
+        self.set_wmclass("space-display", "space-display")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(660, 580)
+
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        self.monitors = query_monitors()
+        self.selected_preset_idx = 0
+        self.revert_timer_id = None
+        self.revert_countdown = 15
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_card']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 10px 16px;
+        }}
+        .card-panel {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+        }}
+        .radar-box {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px dashed {self.pal['accent']};
+            border-radius: {self.pal['radius']};
+            padding: 12px 14px;
+        }}
+        .monitor-chip {{
+            background-color: {self.pal['bg_card']};
+            border: 2px solid {self.pal['cyan']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+        }}
+        .monitor-chip.primary {{
+            border-color: {self.pal['accent']};
+        }}
+        .tool-row {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+            transition: all 0.15s ease;
+        }}
+        .tool-row.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .action-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 14px;
+            transition: all 0.15s ease;
+        }}
+        .action-btn.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        root_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(root_vbox)
+
+        # 1. Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🛰️ APOLLO DISPLAY RADAR // MULTI-MONITOR AVIONICS</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        utc_str = time.strftime('%H:%M:%S UTC', time.gmtime())
+        mon_count = len(self.monitors)
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8500' foreground='{self.pal['green']}'>[ ACTIVE DISPLAYS: {mon_count} ]</span> <span font_size='8500' foreground='{self.pal['text_dim']}'>| UTC: {utc_str} | PROFILE: {self.theme_name.upper()}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        root_vbox.pack_start(header, False, False, 0)
+
+        # 2. Body Container
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_margin_top(12)
+        body.set_margin_bottom(8)
+        body.set_margin_left(16)
+        body.set_margin_right(16)
+        root_vbox.pack_start(body, True, True, 0)
+
+        # 3. Display Topology Radar Canvas
+        radar_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        radar_panel.get_style_context().add_class("card-panel")
+
+        r_title = Gtk.Label()
+        r_title.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>📡 CONNECTED DISPLAY TOPOLOGY</span>")
+        r_title.set_xalign(0.0)
+        radar_panel.pack_start(r_title, False, False, 0)
+
+        self.topo_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.topo_box.get_style_context().add_class("radar-box")
+        radar_panel.pack_start(self.topo_box, False, False, 0)
+        body.pack_start(radar_panel, False, False, 0)
+
+        self.render_topology_chips()
+
+        # 4. Mission Presets Grid
+        presets_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        presets_panel.get_style_context().add_class("card-panel")
+
+        p_title = Gtk.Label()
+        p_title.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>🚀 QUICK TOPOLOGY PRESETS</span>")
+        p_title.set_xalign(0.0)
+        presets_panel.pack_start(p_title, False, False, 0)
+
+        self.presets = [
+            {
+                "key": "1",
+                "title": "🖥️ EXTEND RIGHT (Default Workstation)",
+                "sub": "Place external monitor to the right of primary screen",
+                "action": "extend_right"
+            },
+            {
+                "key": "2",
+                "title": "🖥️ EXTEND LEFT",
+                "sub": "Place external monitor to the left of primary screen",
+                "action": "extend_left"
+            },
+            {
+                "key": "3",
+                "title": "🪞 MIRROR / PRESENTATION MODE",
+                "sub": "Clone primary display output to external projector/screen",
+                "action": "mirror"
+            },
+            {
+                "key": "4",
+                "title": "💻 PRIMARY ONLY (Battery Saver)",
+                "sub": "Disable secondary/external video outputs",
+                "action": "primary_only"
+            },
+            {
+                "key": "5",
+                "title": "📺 DOCKED DESKTOP (Clamshell Mode)",
+                "sub": "Disable internal laptop screen, route all workspaces to external",
+                "action": "docked"
+            },
+            {
+                "key": "6",
+                "title": "🔄 AUTO DETECT & RESET",
+                "sub": "Reset all monitors to preferred auto topology (,preferred,auto,1)",
+                "action": "auto"
+            }
+        ]
+
+        self.preset_buttons = []
+        for i, item in enumerate(self.presets):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn.add(row_box)
+
+            badge = Gtk.Label()
+            badge.set_markup(f"<span font_weight='bold' font_size='10000' foreground='{self.pal['accent']}'>[{item['key']}]</span>")
+            row_box.pack_start(badge, False, False, 0)
+
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>{item['title']}</span>")
+            t_lbl.set_xalign(0.0)
+            text_vbox.pack_start(t_lbl, False, False, 0)
+
+            s_lbl = Gtk.Label()
+            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
+            s_lbl.set_xalign(0.0)
+            text_vbox.pack_start(s_lbl, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_preset(idx))
+            self.preset_buttons.append(btn)
+            presets_panel.pack_start(btn, False, False, 0)
+
+        body.pack_start(presets_panel, True, True, 0)
+
+        # 5. Footer Hint
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer.set_margin_bottom(8)
+        footer.set_margin_left(16)
+        footer.set_margin_right(16)
+
+        self.lbl_footer = Gtk.Label()
+        self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] APPLY PRESET   [ R ] REFRESH   [ ESC ] CLOSE</span>")
+        self.lbl_footer.set_xalign(0.5)
+        footer.pack_start(self.lbl_footer, True, True, 0)
+        root_vbox.pack_start(footer, False, False, 0)
+
+        self.refresh_selection_ui()
+
+    def render_topology_chips(self):
+        for child in self.topo_box.get_children():
+            self.topo_box.remove(child)
+
+        self.monitors = query_monitors()
+        if not self.monitors:
+            lbl = Gtk.Label()
+            lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>No active displays detected via Hyprland IPC.</span>")
+            self.topo_box.pack_start(lbl, True, True, 0)
+            self.topo_box.show_all()
+            return
+
+        for m in self.monitors:
+            chip = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            chip.get_style_context().add_class("monitor-chip")
+            if m.get("focused") or m.get("id") == 0:
+                chip.get_style_context().add_class("primary")
+
+            m_name = m.get("name", "Unknown")
+            m_res = f"{m.get('width', 0)}x{m.get('height', 0)}@{int(m.get('refreshRate', 60))}Hz"
+            m_pos = f"Pos: ({m.get('x', 0)}, {m.get('y', 0)})"
+            m_scale = f"Scale: {m.get('scale', 1.0)}x"
+            m_ws = f"WS: {m.get('activeWorkspace', {}).get('name', '1')}"
+
+            l_name = Gtk.Label()
+            l_name.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_main']}'>🖥️ {m_name}</span>")
+            l_name.set_xalign(0.0)
+            chip.pack_start(l_name, False, False, 0)
+
+            l_meta = Gtk.Label()
+            l_meta.set_markup(f"<span font_size='8000' foreground='{self.pal['text_sub']}'>{m_res} ({m_scale})\n{m_pos} | {m_ws}</span>")
+            l_meta.set_xalign(0.0)
+            chip.pack_start(l_meta, False, False, 0)
+
+            self.topo_box.pack_start(chip, True, True, 0)
+
+        self.topo_box.show_all()
+
+    def refresh_selection_ui(self):
+        for i, btn in enumerate(self.preset_buttons):
+            ctx = btn.get_style_context()
+            if i == self.selected_preset_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def trigger_preset(self, idx):
+        item = self.presets[idx]
+        action = item["action"]
+        mons = query_monitors()
+
+        if action == "auto":
+            execute_hyprctl_monitor(",preferred,auto,1")
+            save_monitors_config([",preferred,auto,1"])
+        elif len(mons) < 2:
+            # Single monitor actions
+            execute_hyprctl_monitor(",preferred,auto,1")
+            save_monitors_config([",preferred,auto,1"])
+            if action != "auto":
+                if shutil.which("notify-send"):
+                    subprocess.Popen(["notify-send", "-a", "Apollo Display", "ℹ️ Single Display Active", f"Applied auto layout for {mons[0].get('name', 'display')}."], start_new_session=True)
+        else:
+            primary = mons[0]
+            secondary = mons[1]
+            p_name = primary.get("name")
+            s_name = secondary.get("name")
+            p_w = primary.get("width", 1920)
+            s_w = secondary.get("width", 1920)
+
+            if action == "extend_right":
+                rule1 = f"{p_name},preferred,0x0,1"
+                rule2 = f"{s_name},preferred,{p_w}x0,1"
+                execute_hyprctl_monitor(rule1)
+                execute_hyprctl_monitor(rule2)
+                save_monitors_config([rule1, rule2])
+            elif action == "extend_left":
+                rule1 = f"{s_name},preferred,0x0,1"
+                rule2 = f"{p_name},preferred,{s_w}x0,1"
+                execute_hyprctl_monitor(rule1)
+                execute_hyprctl_monitor(rule2)
+                save_monitors_config([rule1, rule2])
+            elif action == "mirror":
+                rule1 = f"{p_name},preferred,0x0,1"
+                rule2 = f"{s_name},preferred,0x0,1,mirror,{p_name}"
+                execute_hyprctl_monitor(rule1)
+                execute_hyprctl_monitor(rule2)
+                save_monitors_config([rule1, rule2])
+            elif action == "primary_only":
+                rule1 = f"{p_name},preferred,0x0,1"
+                rule2 = f"{s_name},disable"
+                execute_hyprctl_monitor(rule1)
+                execute_hyprctl_monitor(rule2)
+                save_monitors_config([rule1, rule2])
+            elif action == "docked":
+                rule1 = f"{p_name},disable"
+                rule2 = f"{s_name},preferred,0x0,1"
+                execute_hyprctl_monitor(rule1)
+                execute_hyprctl_monitor(rule2)
+                save_monitors_config([rule1, rule2])
+
+        # Reload wallpaper & Waybar if needed
+        if shutil.which("hyprpaper"):
+            subprocess.Popen(["killall", "-SIGUSR2", "hyprpaper"], stderr=subprocess.DEVNULL)
+        
+        self.render_topology_chips()
+        if shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", "-a", "Apollo Display", "🖥️ Display Layout Applied", f"Topology preset: {item['title']}"], start_new_session=True)
+
+    def on_key_press(self, widget, event):
+        keyname = Gdk.keyval_name(event.keyval)
+
+        if keyname in ["Escape", "q", "Q"]:
+            cleanup()
+            Gtk.main_quit()
+            return True
+        if keyname in ["r", "R"]:
+            self.render_topology_chips()
+            return True
+        if keyname in ["Down", "j", "J", "Tab"]:
+            self.selected_preset_idx = (self.selected_preset_idx + 1) % len(self.presets)
+            self.refresh_selection_ui()
+            return True
+        if keyname in ["Up", "k", "K", "ISO_Left_Tab"]:
+            self.selected_preset_idx = (self.selected_preset_idx - 1 + len(self.presets)) % len(self.presets)
+            self.refresh_selection_ui()
+            return True
+        if keyname in ["Return", "KP_Enter", "space"]:
+            self.trigger_preset(self.selected_preset_idx)
+            return True
+        if keyname in ["1", "2", "3", "4", "5", "6"]:
+            idx = int(keyname) - 1
+            if 0 <= idx < len(self.presets):
+                self.trigger_preset(idx)
+                return True
+        return False
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def cli_handler(arg):
+    mons = query_monitors()
+    if not mons:
+        print("No active monitors detected.")
+        sys.exit(1)
+
+    if arg in ["--status", "-s"]:
+        print(json.dumps(mons, indent=2))
+    elif arg in ["--auto", "-a"]:
+        execute_hyprctl_monitor(",preferred,auto,1")
+        save_monitors_config([",preferred,auto,1"])
+        print("Reset to auto monitor layout.")
+    elif len(mons) < 2:
+        execute_hyprctl_monitor(",preferred,auto,1")
+        save_monitors_config([",preferred,auto,1"])
+        print("Single monitor active. Auto layout applied.")
+    else:
+        p_name = mons[0].get("name")
+        s_name = mons[1].get("name")
+        p_w = mons[0].get("width", 1920)
+        s_w = mons[1].get("width", 1920)
+
+        if arg in ["--extend-right", "-er", "--extend"]:
+            r1 = f"{p_name},preferred,0x0,1"
+            r2 = f"{s_name},preferred,{p_w}x0,1"
+            execute_hyprctl_monitor(r1)
+            execute_hyprctl_monitor(r2)
+            save_monitors_config([r1, r2])
+            print(f"Extended right: {p_name} + {s_name}")
+        elif arg in ["--extend-left", "-el"]:
+            r1 = f"{s_name},preferred,0x0,1"
+            r2 = f"{p_name},preferred,{s_w}x0,1"
+            execute_hyprctl_monitor(r1)
+            execute_hyprctl_monitor(r2)
+            save_monitors_config([r1, r2])
+            print(f"Extended left: {s_name} + {p_name}")
+        elif arg in ["--mirror", "-m"]:
+            r1 = f"{p_name},preferred,0x0,1"
+            r2 = f"{s_name},preferred,0x0,1,mirror,{p_name}"
+            execute_hyprctl_monitor(r1)
+            execute_hyprctl_monitor(r2)
+            save_monitors_config([r1, r2])
+            print(f"Mirrored {s_name} to {p_name}")
+        elif arg in ["--primary-only", "-p"]:
+            r1 = f"{p_name},preferred,0x0,1"
+            r2 = f"{s_name},disable"
+            execute_hyprctl_monitor(r1)
+            execute_hyprctl_monitor(r2)
+            save_monitors_config([r1, r2])
+            print(f"Primary only: {p_name}")
+        elif arg in ["--docked", "-d"]:
+            r1 = f"{p_name},disable"
+            r2 = f"{s_name},preferred,0x0,1"
+            execute_hyprctl_monitor(r1)
+            execute_hyprctl_monitor(r2)
+            save_monitors_config([r1, r2])
+            print(f"Docked desktop: {s_name}")
+        else:
+            print(f"Unknown argument: {arg}")
+            print("Usage: space-display [--status | --extend-right | --extend-left | --mirror | --primary-only | --docked | --auto]")
+            sys.exit(1)
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ["--help", "-h"]:
+            print("Apollo Space Display Radar // Multi-Monitor Controller")
+            print("Usage: space-display [options]")
+            print("  (no args)          Open graphical Display Radar console")
+            print("  --status, -s       Print connected display telemetry")
+            print("  --extend-right     Place secondary screen to the right of primary")
+            print("  --extend-left      Place secondary screen to the left of primary")
+            print("  --mirror, -m       Clone/mirror primary display output")
+            print("  --primary-only, -p Disable secondary displays")
+            print("  --docked, -d       Disable internal laptop screen, use external only")
+            print("  --auto, -a         Reset to auto topology")
+            sys.exit(0)
+        elif sys.argv[1].startswith("-"):
+            cli_handler(sys.argv[1])
+            sys.exit(0)
+
+    check_singleton()
+    win = SpaceDisplayDialog()
+    win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

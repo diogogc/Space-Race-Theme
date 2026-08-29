@@ -366,7 +366,7 @@ class SpaceToolsDialog(Gtk.Window):
             self.tab_system.get_style_context().add_class("active")
             self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] AV &amp; CAPTURE</span>")
             self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛡️ [S] SYSTEM &amp; RECOVERY</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-7 / ENTER ] RUN   [ ESC ] CLOSE</span>")
 
     def build_capture_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -571,24 +571,30 @@ class SpaceToolsDialog(Gtk.Window):
             },
             {
                 "key": "3",
+                "title": "🛰️ MULTI-MONITOR AVIONICS RADAR",
+                "sub": "Configure display topology: extend right/left, mirror, solo, or docked mode",
+                "action": "display_radar"
+            },
+            {
+                "key": "4",
                 "title": "⚙️ CONFIGURE AI RECOVERY ENGINE",
                 "sub": "Select active AI service: agy, claude, aider, ollama, or custom harness",
                 "action": "ai_config"
             },
             {
-                "key": "4",
+                "key": "5",
                 "title": "🧹 CLEAR RECOVERY FLAGS & DUMP",
                 "sub": "Purge ~/.cache failure dump and resolve active warning flag in sys-mem",
                 "action": "ai_clean"
             },
             {
-                "key": "5",
+                "key": "6",
                 "title": "🔄 REBUILD RAMDISKS (MKINITCPIO)",
                 "sub": "Regenerate all kernel initial ramdisk images (sudo mkinitcpio -P)",
                 "action": "rebuild_ramdisks"
             },
             {
-                "key": "6",
+                "key": "7",
                 "title": "🧹 CLEAN PACMAN CACHE & ORPHANS",
                 "sub": "Run paccache -r and purge unneeded orphaned dependencies safely",
                 "action": "clean_pkgs"
@@ -821,6 +827,11 @@ class SpaceToolsDialog(Gtk.Window):
             cleanup()
             launch_in_terminal("space-ai-recovery", title="Apollo AI Diagnostic Harness")
             Gtk.main_quit()
+        elif action == "display_radar":
+            self.hide()
+            cleanup()
+            subprocess.Popen(["space-display"], start_new_session=True)
+            Gtk.main_quit()
         elif action == "ai_config":
             self.hide()
             cleanup()
@@ -901,7 +912,7 @@ class SpaceToolsDialog(Gtk.Window):
             if keyname in ["Return", "KP_Enter", "space"]:
                 self.trigger_system_action(self.system_selected_idx)
                 return True
-            if keyname in ["1", "2", "3", "4", "5", "6"]:
+            if keyname in ["1", "2", "3", "4", "5", "6", "7"]:
                 idx = int(keyname) - 1
                 if 0 <= idx < len(self.system_tool_items):
                     self.trigger_system_action(idx)

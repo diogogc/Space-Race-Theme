@@ -193,7 +193,8 @@ echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + E       ${RESET}${MUTED}⫸${
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + V       ${RESET}${MUTED}⫸${RESET} ${WHITE}CAPCOM Audio Intercom & Dual VU Meters${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + K       ${RESET}${MUTED}⫸${RESET} ${WHITE}Keybinding Flight Guide & Cheatsheet Modal${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + O       ${RESET}${MUTED}⫸${RESET} ${WHITE}8-Bit Orbital Screensaver (Instant Play)${RESET}"
-echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + D       ${RESET}${MUTED}⫸${RESET} ${WHITE}Default Applications Manager${RESET}"
+echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + D       ${RESET}${MUTED}⫸${RESET} ${WHITE}Default Applications Manager${RESET}
+    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + R       ${RESET}${MUTED}⫸${RESET} ${WHITE}Multi-Monitor Avionics & Display Radar${RESET}"
 echo ""
 echo -e "  ${CYAN}${BOLD}● WORKSPACE & WINDOW MANAGEMENT${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + [1 - 9]         ${RESET}${MUTED}⫸${RESET} ${WHITE}Switch directly to Workspace 1 through 9${RESET}"
