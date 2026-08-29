@@ -254,17 +254,21 @@ class SpaceThemeConfigDialog(Gtk.Window):
         .tool-row.active-theme {{
             border: 1.5px solid {self.pal['green']};
         }}
-        .action-btn {{
+        button, .action-btn {
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 6px 10px;
+            color: {self.pal['text_main']};
+            padding: 6px 12px;
             transition: all 0.15s ease;
-        }}
-        .action-btn.selected {{
+            box-shadow: none;
+            text-shadow: none;
+        }
+        button:hover, .action-btn:hover, .action-btn.selected {
             background-color: {self.pal['btn_hover']};
-            border: 1px solid {self.pal['accent']};
-        }}
+            border-color: {self.pal['accent']};
+            color: {self.pal['text_main']};
+        }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css.encode('utf-8'))
@@ -453,9 +457,12 @@ class SpaceThemeConfigDialog(Gtk.Window):
         self.lbl_wp_info.set_xalign(0.0)
         card.pack_start(self.lbl_wp_info, True, True, 0)
 
-        btn_cycle = Gtk.Button(label="⚡ Cycle Next (Super+Alt+W)")
+        btn_cycle = Gtk.EventBox()
         btn_cycle.get_style_context().add_class("action-btn")
-        btn_cycle.connect("clicked", lambda w: self.cycle_wallpaper_now())
+        lbl_cy = Gtk.Label()
+        lbl_cy.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>⚡ Cycle Next (Super+Alt+W)</span>")
+        btn_cycle.add(lbl_cy)
+        btn_cycle.connect("button-press-event", lambda w, e: self.cycle_wallpaper_now())
         card.pack_start(btn_cycle, False, False, 0)
         vbox.pack_start(card, False, False, 0)
 
@@ -541,9 +548,12 @@ class SpaceThemeConfigDialog(Gtk.Window):
         lbl_ss_head.set_xalign(0.0)
         top_card.pack_start(lbl_ss_head, True, True, 0)
 
-        btn_preview = Gtk.Button(label="⚡ Launch Preview (Super+Shift+O)")
+        btn_preview = Gtk.EventBox()
         btn_preview.get_style_context().add_class("action-btn")
-        btn_preview.connect("clicked", lambda w: self.preview_screensaver())
+        lbl_pv = Gtk.Label()
+        lbl_pv.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['accent']}'>⚡ Launch Preview (Super+Shift+O)</span>")
+        btn_preview.add(lbl_pv)
+        btn_preview.connect("button-press-event", lambda w, e: self.preview_screensaver())
         top_card.pack_start(btn_preview, False, False, 0)
         vbox.pack_start(top_card, False, False, 0)
 
@@ -720,8 +730,9 @@ class SpaceThemeConfigDialog(Gtk.Window):
             chk.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{chk_color}'>{chk_icon}</span>")
             row_box.pack_start(chk, False, False, 0)
 
+            safe_label = GLib.markup_escape_text(mod['label'])
             t_lbl = Gtk.Label()
-            t_lbl.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>[{i+1}] {mod['label']}</span>")
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>[{i+1}] {safe_label}</span>")
             t_lbl.set_xalign(0.0)
             row_box.pack_start(t_lbl, True, True, 0)
 
