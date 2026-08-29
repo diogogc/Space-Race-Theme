@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Theme & Visual Avionics Config
+GenericName=Theme, Wallpaper & Waybar Settings
+Comment=Configure Apollo mission theme profiles, dynamic wallpapers, and Waybar instruments
+Exec=space-theme-config
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=Utility;Settings;
+Keywords=theme;wallpaper;waybar;palette;apollo;nasa;crt;kosmos;

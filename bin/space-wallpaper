@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# 🌌 Apollo Mission Control: Dynamic In-Theme Wallpaper Switcher
+# ==============================================================================
+# Usage:
+#   space-wallpaper next          -> Cycle to next wallpaper for active theme
+#   space-wallpaper prev          -> Cycle to previous wallpaper for active theme
+#   space-wallpaper set <path>    -> Set explicit wallpaper path
+#   space-wallpaper list          -> List available wallpapers for active theme
+#   space-wallpaper current       -> Print active wallpaper path
+# ==============================================================================
+
+set -euo pipefail
+
+THEMES_DIR="${HOME}/.config/themes"
+CURRENT_THEME_FILE="${THEMES_DIR}/current_theme"
+CURRENT_THEME="nasa"
+if [[ -f "$CURRENT_THEME_FILE" ]]; then
+    CURRENT_THEME="$(cat "$CURRENT_THEME_FILE" 2>/dev/null || echo "nasa")"
+fi
+
+THEME_DIR="${THEMES_DIR}/${CURRENT_THEME}"
+WALLPAPER_SYMLINK="${THEME_DIR}/wallpaper.jpg"
+HYPRPAPER_CONF="${HOME}/.config/hypr/hyprpaper.conf"
+WALLPAPERS_DIR="${HOME}/Pictures/Wallpapers"
+
+# Discover all candidate wallpapers for the active theme
+get_theme_wallpapers() {
+    local wp_list=()
+
+    # 1. Theme-specific directory images
+    if [[ -d "$THEME_DIR" ]]; then
+        while IFS= read -r f; do
+            [[ -f "$f" && "$(basename "$f")" != "wallpaper.jpg" ]] && wp_list+=("$(realpath "$f")")
+        done < <(find "$THEME_DIR" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | sort)
+    fi
+
+    # 2. Main Wallpapers directory matching theme name
+    for dir in "$WALLPAPERS_DIR" "${HOME}/Space-Race-Theme/wallpapers"; do
+        if [[ -d "$dir" ]]; then
+            while IFS= read -r f; do
+                if [[ -f "$f" ]]; then
+                    local bname
+                    bname="$(basename "$f" | tr '[:upper:]' '[:lower:]')"
+                    local tname="${CURRENT_THEME//-/_}"
+                    if [[ "$bname" == *"${CURRENT_THEME}"* || "$bname" == *"${tname}"* || ("$CURRENT_THEME" == "kosmos-vfd" && "$bname" == *kosmos*) || ("$CURRENT_THEME" == "nasa" && ("$bname" == *apollo* || "$bname" == *nasa*)) ]]; then
+                        wp_list+=("$(realpath "$f")")
+                    fi
+                fi
+            done < <(find "$dir" -maxdepth 2 -type f \( -name "*.jpg" -o -name "*.png" \) 2>/dev/null | sort)
+        fi
+    done
+
+    # 3. Include historical catalog if theme list is sparse or for NASA
+    for hdir in "${WALLPAPERS_DIR}/historical" "${HOME}/Space-Race-Theme/wallpapers/historical"; do
+        if [[ -d "$hdir" ]]; then
+            while IFS= read -r f; do
+                [[ -f "$f" ]] && wp_list+=("$(realpath "$f")")
+            done < <(find "$hdir" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.png" \) 2>/dev/null | sort)
+        fi
+    done
+
+    # Deduplicate entries safely
+    printf '%s\n' "${wp_list[@]}" | awk '!seen[$0]++'
+}
+
+apply_wallpaper() {
+    local target_wp="$1"
+    if [[ ! -f "$target_wp" ]]; then
+        echo "Error: Wallpaper file does not exist: $target_wp" >&2
+        return 1
+    fi
+
+    # Update theme symlink safely
+    ln -sf "$target_wp" "$WALLPAPER_SYMLINK"
+
+    # Apply live via hyprpaper IPC
+    if pgrep -x hyprpaper >/dev/null 2>&1; then
+        hyprctl hyprpaper preload "$target_wp" >/dev/null 2>&1 || true
+        for mon in $(hyprctl monitors -j 2>/dev/null | grep -o '"name": *"[^"]*"' | cut -d'"' -f4); do
+            hyprctl hyprpaper wallpaper "${mon},${target_wp}" >/dev/null 2>&1 || true
+        done
+        hyprctl hyprpaper unload all >/dev/null 2>&1 || true
+        hyprctl hyprpaper preload "$target_wp" >/dev/null 2>&1 || true
+    fi
+
+    # Update hyprpaper.conf for persistent reloads
+    cat <<EOF > "$HYPRPAPER_CONF"
+# Apollo Space Mission Control - Dynamic Wallpaper Sync
+preload = ${target_wp}
+wallpaper = , ${target_wp}
+splash = false
+ipc = true
+EOF
+
+    local wp_name
+    wp_name="$(basename "$target_wp")"
+    echo "✅ Switched wallpaper to: ${wp_name} (${CURRENT_THEME})"
+
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -u low -a "Apollo Wallpaper" \
+            "🌌 Wallpaper Switched" \
+            "Profile: ${CURRENT_THEME^^}\nImage: ${wp_name}" || true
+    fi
+}
+
+cycle_wallpaper() {
+    local direction="${1:-next}"
+    mapfile -t wps < <(get_theme_wallpapers)
+
+    if [[ ${#wps[@]} -eq 0 ]]; then
+        echo "No wallpapers found for theme: $CURRENT_THEME" >&2
+        return 1
+    fi
+
+    local current_target=""
+    if [[ -L "$WALLPAPER_SYMLINK" ]]; then
+        current_target="$(readlink -f "$WALLPAPER_SYMLINK" || true)"
+    fi
+
+    local current_idx=0
+    for i in "${!wps[@]}"; do
+        if [[ "${wps[$i]}" == "$current_target" ]]; then
+            current_idx="$i"
+            break
+        fi
+    done
+
+    local next_idx=0
+    if [[ "$direction" == "prev" ]]; then
+        next_idx=$(( (current_idx - 1 + ${#wps[@]}) % ${#wps[@]} ))
+    else
+        next_idx=$(( (current_idx + 1) % ${#wps[@]} ))
+    fi
+
+    apply_wallpaper "${wps[$next_idx]}"
+}
+
+case "${1:-next}" in
+    next|--next)
+        cycle_wallpaper "next"
+        ;;
+    prev|--prev)
+        cycle_wallpaper "prev"
+        ;;
+    set|--set)
+        if [[ -z "${2:-}" ]]; then
+            echo "Usage: space-wallpaper set <path-to-image>" >&2
+            exit 1
+        fi
+        apply_wallpaper "$(realpath "$2")"
+        ;;
+    list|--list)
+        echo "Available wallpapers for [${CURRENT_THEME}]:"
+        get_theme_wallpapers
+        ;;
+    current|--current)
+        if [[ -L "$WALLPAPER_SYMLINK" ]]; then
+            readlink -f "$WALLPAPER_SYMLINK"
+        else
+            echo "No active symlink found at $WALLPAPER_SYMLINK"
+        fi
+        ;;
+    *)
+        echo "Usage: space-wallpaper [next | prev | set <path> | list | current]"
+        exit 1
+        ;;
+esac

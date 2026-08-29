@@ -194,7 +194,9 @@ echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + V       ${RESET}${MUTED}⫸${
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + K       ${RESET}${MUTED}⫸${RESET} ${WHITE}Keybinding Flight Guide & Cheatsheet Modal${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + O       ${RESET}${MUTED}⫸${RESET} ${WHITE}8-Bit Orbital Screensaver (Instant Play)${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + D       ${RESET}${MUTED}⫸${RESET} ${WHITE}Default Applications Manager${RESET}
-    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + R       ${RESET}${MUTED}⫸${RESET} ${WHITE}Multi-Monitor Avionics & Display Radar${RESET}"
+    ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + R       ${RESET}${MUTED}⫸${RESET} ${WHITE}Multi-Monitor Avionics & Display Radar${RESET}
+    ${BRIGHT_AMBER}${BOLD}SUPER + ALT + T         ${RESET}${MUTED}⫸${RESET} ${WHITE}Theme & Visual Avionics Configurator${RESET}
+    ${BRIGHT_AMBER}${BOLD}SUPER + ALT + W         ${RESET}${MUTED}⫸${RESET} ${WHITE}Cycle In-Theme Wallpaper (Current Profile)${RESET}"
 echo ""
 echo -e "  ${CYAN}${BOLD}● WORKSPACE & WINDOW MANAGEMENT${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}SUPER + [1 - 9]         ${RESET}${MUTED}⫸${RESET} ${WHITE}Switch directly to Workspace 1 through 9${RESET}"

@@ -1,0 +1,773 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Visual Avionics & Theme Configurator
+Unified GUI for:
+  1) Mission Theme Profiles (NASA, CRT-Amber, CRT-Green, Kosmos-VFD)
+  2) Per-Theme Wallpaper Matrix & Dynamic In-Theme Cycler
+  3) Waybar Menubar Module Visibility Matrix & Live Rebuild
+Strict Zero-White-Background Policy across all 4 space mission themes.
+"""
+import sys
+import os
+import subprocess
+import signal
+import time
+import json
+import shutil
+import re
+from pathlib import Path
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+
+PID_FILE = f"/tmp/space-theme-config-{os.getuid()}.pid"
+THEMES_DIR = Path(os.path.expanduser("~/.config/themes"))
+CURRENT_THEME_FILE = THEMES_DIR / "current_theme"
+WAYBAR_CONFIG = Path(os.path.expanduser("~/.config/waybar/config.jsonc"))
+
+THEMES = {
+    "nasa": {
+        "name": "NASA Apollo MOCR",
+        "desc": "Deep space navy chassis with Apollo 11 amber avionics",
+        "bg": "#14171d",
+        "bg_card": "#1c222b",
+        "border": "#ffb000",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#8c9ba5",
+        "btn_bg": "#10141a",
+        "btn_border": "#2e3846",
+        "btn_hover": "#263040",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "red": "#ff3333",
+        "cyan": "#00d2ff",
+        "radius": "4px",
+    },
+    "crt-amber": {
+        "name": "CRT Amber Phosphor",
+        "desc": "High-contrast monochromatic 590nm warm phosphor glow",
+        "bg": "#0e1014",
+        "bg_card": "#161920",
+        "border": "#ff9e00",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#734900",
+        "btn_bg": "#08090c",
+        "btn_border": "#402800",
+        "btn_hover": "#241908",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "red": "#ff5533",
+        "cyan": "#ffbb33",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "name": "CRT Green Terminal",
+        "desc": "Retro telemetry 525nm phosphor vector display",
+        "bg": "#0a100a",
+        "bg_card": "#0f1c0f",
+        "border": "#33ff33",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#050a05",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#102610",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "red": "#ff4444",
+        "cyan": "#55ff55",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "name": "Kosmos VFD Cyan",
+        "desc": "Soviet Soyuz avionics vacuum fluorescent display",
+        "bg": "#0e1e1a",
+        "bg_card": "#152d27",
+        "border": "#48e5c2",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#081411",
+        "btn_border": "#1f6656",
+        "btn_hover": "#173830",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "red": "#ff4860",
+        "cyan": "#48e5c2",
+        "radius": "3px",
+    }
+}
+
+ALL_WAYBAR_MODULES = [
+    {"id": "custom/tools", "label": "TOOL - Operations & Capture Console", "default": True},
+    {"id": "custom/iss", "label": "ISS - Orbital Tracking Telemetry", "default": True},
+    {"id": "custom/met", "label": "MET - Mission Elapsed Time Clock", "default": True},
+    {"id": "pulseaudio", "label": "AUDIO - CAPCOM Volume & Intercom", "default": True},
+    {"id": "custom/network-telemetry", "label": "NET - Communications & Wi-Fi Radar", "default": True},
+    {"id": "custom/power-telemetry", "label": "PWR - MDC-02 Energy & Battery Gauge", "default": True},
+    {"id": "tray", "label": "TRAY - System Tray Applet Icons", "default": False},
+]
+
+def get_current_theme():
+    if CURRENT_THEME_FILE.exists():
+        try:
+            t = CURRENT_THEME_FILE.read_text().strip()
+            if t in THEMES:
+                return t
+        except Exception:
+            pass
+    return "nasa"
+
+class SpaceThemeConfigDialog(Gtk.Window):
+    def __init__(self, initial_tab="theme"):
+        super().__init__(title="Apollo Theme & Visual Avionics Configurator")
+        self.set_wmclass("space-theme-config", "space-theme-config")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(680, 580)
+
+        self.current_theme = get_current_theme()
+        self.pal = THEMES.get(self.current_theme, THEMES["nasa"])
+        self.active_tab = initial_tab
+
+        # Navigation State
+        self.theme_selected_idx = 0
+        self.wp_selected_idx = 0
+        self.mod_selected_idx = 0
+
+        self.theme_cards = []
+        self.wp_rows = []
+        self.mod_rows = []
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+        self.switch_tab(initial_tab)
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_card']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 10px 16px;
+        }}
+        .tab-bar {{
+            background-color: {self.pal['bg']};
+            border-bottom: 1px solid {self.pal['btn_border']};
+            padding: 4px 16px 0 16px;
+        }}
+        .nav-tab {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-bottom: none;
+            border-radius: {self.pal['radius']} {self.pal['radius']} 0 0;
+            padding: 8px 14px;
+            transition: all 0.15s ease;
+        }}
+        .nav-tab.active {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['accent']};
+            border-bottom: 2px solid {self.pal['bg_card']};
+        }}
+        .card-panel {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+            margin-bottom: 8px;
+        }}
+        .tool-row {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+            transition: all 0.15s ease;
+        }}
+        .tool-row.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .tool-row.active-theme {{
+            border: 1.5px solid {self.pal['green']};
+        }}
+        .action-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 14px;
+            transition: all 0.15s ease;
+        }}
+        .action-btn.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        root_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(root_vbox)
+
+        # 1. Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🛸 APOLLO THEME &amp; VISUAL AVIONICS CONFIGURATOR</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        utc_str = time.strftime('%H:%M:%S UTC', time.gmtime())
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8500' foreground='{self.pal['green']}'>[ ACTIVE PROFILE: {self.current_theme.upper()} ]</span> <span font_size='8500' foreground='{self.pal['text_dim']}'>| UTC: {utc_str}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        root_vbox.pack_start(header, False, False, 0)
+
+        # 2. Navigation Tab Bar (3 Tabs)
+        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tab_bar.get_style_context().add_class("tab-bar")
+
+        # Tab 1: Themes
+        self.tab_theme = Gtk.EventBox()
+        self.tab_theme.get_style_context().add_class("nav-tab")
+        self.lbl_tab_theme = Gtk.Label()
+        self.tab_theme.add(self.lbl_tab_theme)
+        self.tab_theme.connect("button-press-event", lambda w, e: self.switch_tab("theme"))
+        tab_bar.pack_start(self.tab_theme, False, False, 0)
+
+        # Tab 2: Wallpapers
+        self.tab_wallpaper = Gtk.EventBox()
+        self.tab_wallpaper.get_style_context().add_class("nav-tab")
+        self.lbl_tab_wallpaper = Gtk.Label()
+        self.tab_wallpaper.add(self.lbl_tab_wallpaper)
+        self.tab_wallpaper.connect("button-press-event", lambda w, e: self.switch_tab("wallpaper"))
+        tab_bar.pack_start(self.tab_wallpaper, False, False, 0)
+
+        # Tab 3: Waybar Modules
+        self.tab_modules = Gtk.EventBox()
+        self.tab_modules.get_style_context().add_class("nav-tab")
+        self.lbl_tab_modules = Gtk.Label()
+        self.tab_modules.add(self.lbl_tab_modules)
+        self.tab_modules.connect("button-press-event", lambda w, e: self.switch_tab("modules"))
+        tab_bar.pack_start(self.tab_modules, False, False, 0)
+
+        root_vbox.pack_start(tab_bar, False, False, 0)
+
+        # 3. Main Stack Container
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(120)
+        root_vbox.pack_start(self.stack, True, True, 0)
+
+        # Build Tab Pages
+        self.build_theme_tab()
+        self.build_wallpaper_tab()
+        self.build_modules_tab()
+
+        # 4. Footer Hint
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer.set_margin_top(4)
+        footer.set_margin_bottom(8)
+        footer.set_margin_left(16)
+        footer.set_margin_right(16)
+
+        self.lbl_footer = Gtk.Label()
+        self.lbl_footer.set_xalign(0.5)
+        footer.pack_start(self.lbl_footer, True, True, 0)
+        root_vbox.pack_start(footer, False, False, 0)
+
+        self.update_tab_headers()
+
+    def update_tab_headers(self):
+        self.tab_theme.get_style_context().remove_class("active")
+        self.tab_wallpaper.get_style_context().remove_class("active")
+        self.tab_modules.get_style_context().remove_class("active")
+
+        if self.active_tab == "theme":
+            self.tab_theme.get_style_context().add_class("active")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🎨 [T] MISSION THEMES</span>")
+            self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR BAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / W / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-4 / ENTER ] APPLY THEME   [ ESC ] CLOSE</span>")
+        elif self.active_tab == "wallpaper":
+            self.tab_wallpaper.get_style_context().add_class("active")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] MISSION THEMES</span>")
+            self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🌌 [W] WALLPAPERS</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR BAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ ENTER ] SET WALLPAPER   [ C ] CYCLE   [ ESC ] CLOSE</span>")
+        elif self.active_tab == "modules":
+            self.tab_modules.get_style_context().add_class("active")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] MISSION THEMES</span>")
+            self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📊 [M] WAYBAR BAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / 1-7 ] TOGGLE   [ ESC ] CLOSE</span>")
+
+    def build_theme_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        vbox.set_margin_top(12)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        self.theme_items = [
+            {"id": "nasa", "key": "1", "name": "🚀 NASA APOLLO MOCR", "sub": "Deep space navy chassis with Apollo 11 amber flight telemetry"},
+            {"id": "crt-amber", "key": "2", "name": "📟 CRT AMBER PHOSPHOR", "sub": "High-contrast monochromatic 590nm warm phosphor glow"},
+            {"id": "crt-green", "key": "3", "name": "🟢 CRT GREEN TERMINAL", "sub": "Retro telemetry 525nm phosphor vector display"},
+            {"id": "kosmos-vfd", "key": "4", "name": "🛰️ KOSMOS VFD CYAN", "sub": "Soviet Soyuz avionics vacuum fluorescent display (48e5c2)"}
+        ]
+
+        self.theme_cards = []
+        for i, item in enumerate(self.theme_items):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+            if item["id"] == self.current_theme:
+                btn.get_style_context().add_class("active-theme")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            btn.add(row_box)
+
+            badge = Gtk.Label()
+            badge.set_markup(f"<span font_weight='bold' font_size='10500' foreground='{self.pal['accent']}'>[{item['key']}]</span>")
+            row_box.pack_start(badge, False, False, 0)
+
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            t_lbl = Gtk.Label()
+            active_marker = " <span foreground='#2ef788'>[ ACTIVE ]</span>" if item["id"] == self.current_theme else ""
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{item['name']}</span>{active_marker}")
+            t_lbl.set_xalign(0.0)
+            text_vbox.pack_start(t_lbl, False, False, 0)
+
+            s_lbl = Gtk.Label()
+            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
+            s_lbl.set_xalign(0.0)
+            text_vbox.pack_start(s_lbl, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.apply_theme_choice(idx))
+            self.theme_cards.append(btn)
+            vbox.pack_start(btn, False, False, 0)
+
+        self.stack.add_named(vbox, "theme")
+
+    def build_wallpaper_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        # Wallpaper Header Actions Card
+        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        card.get_style_context().add_class("card-panel")
+
+        self.lbl_wp_info = Gtk.Label()
+        self.lbl_wp_info.set_xalign(0.0)
+        card.pack_start(self.lbl_wp_info, True, True, 0)
+
+        btn_cycle = Gtk.Button(label="⚡ Cycle Next (Super+Alt+W)")
+        btn_cycle.get_style_context().add_class("action-btn")
+        btn_cycle.connect("clicked", lambda w: self.cycle_wallpaper_now())
+        card.pack_start(btn_cycle, False, False, 0)
+        vbox.pack_start(card, False, False, 0)
+
+        # Wallpaper List Container (Scrolled)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(340)
+
+        self.wp_list_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        scrolled.add(self.wp_list_container)
+        vbox.pack_start(scrolled, True, True, 0)
+
+        self.populate_wallpaper_rows()
+        self.stack.add_named(vbox, "wallpaper")
+
+    def populate_wallpaper_rows(self):
+        for child in self.wp_list_container.get_children():
+            self.wp_list_container.remove(child)
+
+        try:
+            out = subprocess.check_output(["space-wallpaper", "list"], text=True, stderr=subprocess.DEVNULL)
+            lines = [l.strip() for l in out.splitlines() if l.strip() and not l.startswith("Available")]
+        except Exception:
+            lines = []
+
+        try:
+            current_wp = subprocess.check_output(["space-wallpaper", "current"], text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            current_wp = ""
+
+        self.lbl_wp_info.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_main']}'>🌌 {self.current_theme.upper()} WALLPAPER MATRIX</span>\n<span font_size='8000' foreground='{self.pal['text_dim']}'>{len(lines)} wallpapers registered for this theme variation</span>")
+
+        self.wp_rows = []
+        self.wp_file_paths = lines
+
+        if not lines:
+            lbl = Gtk.Label()
+            lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>No candidate wallpapers found for {self.current_theme}.</span>")
+            self.wp_list_container.pack_start(lbl, False, False, 0)
+            self.wp_list_container.show_all()
+            return
+
+        for i, path_str in enumerate(lines):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+            is_active = (path_str == current_wp)
+            if is_active:
+                btn.get_style_context().add_class("active-theme")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn.add(row_box)
+
+            icon_lbl = Gtk.Label()
+            icon_lbl.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🖼️</span>")
+            row_box.pack_start(icon_lbl, False, False, 0)
+
+            name = Path(path_str).name
+            parent = Path(path_str).parent.name
+            t_lbl = Gtk.Label()
+            act_txt = " <span foreground='#2ef788'>[ CURRENT ACTIVE ]</span>" if is_active else ""
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>{name}</span>{act_txt}\n<span font_size='7500' foreground='{self.pal['text_dim']}'>Source: {parent}/</span>")
+            t_lbl.set_xalign(0.0)
+            row_box.pack_start(t_lbl, True, True, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.set_wallpaper_choice(idx))
+            self.wp_rows.append(btn)
+            self.wp_list_container.pack_start(btn, False, False, 0)
+
+        self.wp_list_container.show_all()
+
+    def build_modules_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        # Header card
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        card.get_style_context().add_class("card-panel")
+
+        l1 = Gtk.Label()
+        l1.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_main']}'>📊 WAYBAR MENUBAR MODULE VISIBILITY</span>")
+        l1.set_xalign(0.0)
+        card.pack_start(l1, False, False, 0)
+
+        l2 = Gtk.Label()
+        l2.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Toggle individual instruments on the mission top bar. Changes apply live immediately.</span>")
+        l2.set_xalign(0.0)
+        card.pack_start(l2, False, False, 0)
+        vbox.pack_start(card, False, False, 0)
+
+        # Modules list container
+        self.mod_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        vbox.pack_start(self.mod_container, True, True, 0)
+
+        self.populate_module_rows()
+        self.stack.add_named(vbox, "modules")
+
+    def get_active_waybar_modules(self):
+        if not WAYBAR_CONFIG.exists():
+            return [m["id"] for m in ALL_WAYBAR_MODULES if m["default"]]
+        try:
+            content = WAYBAR_CONFIG.read_text()
+            # Clean comments for JSON parsing
+            clean = re.sub(r'//.*', '', content)
+            data = json.loads(clean)
+            return data.get("modules-right", [])
+        except Exception:
+            return [m["id"] for m in ALL_WAYBAR_MODULES if m["default"]]
+
+    def populate_module_rows(self):
+        for child in self.mod_container.get_children():
+            self.mod_container.remove(child)
+
+        active_mods = self.get_active_waybar_modules()
+        self.mod_rows = []
+        self.mod_switches = []
+
+        for i, mod in enumerate(ALL_WAYBAR_MODULES):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn.add(row_box)
+
+            is_on = (mod["id"] in active_mods)
+            chk = Gtk.Label()
+            chk_color = self.pal['green'] if is_on else self.pal['text_dim']
+            chk_icon = "[✔ ON ]" if is_on else "[   OFF]"
+            chk.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{chk_color}'>{chk_icon}</span>")
+            row_box.pack_start(chk, False, False, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>[{i+1}] {mod['label']}</span>")
+            t_lbl.set_xalign(0.0)
+            row_box.pack_start(t_lbl, True, True, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.toggle_waybar_module(idx))
+            self.mod_rows.append(btn)
+            self.mod_container.pack_start(btn, False, False, 0)
+
+        self.mod_container.show_all()
+
+    def toggle_waybar_module(self, idx):
+        mod_item = ALL_WAYBAR_MODULES[idx]
+        mod_id = mod_item["id"]
+        active_mods = self.get_active_waybar_modules()
+
+        if mod_id in active_mods:
+            active_mods.remove(mod_id)
+        else:
+            active_mods.append(mod_id)
+
+        # Reorder to match standard hierarchy
+        ordered = []
+        for m in ALL_WAYBAR_MODULES:
+            if m["id"] in active_mods:
+                ordered.append(m["id"])
+
+        # Write safely to config.jsonc
+        try:
+            if WAYBAR_CONFIG.exists():
+                shutil.copyfile(WAYBAR_CONFIG, f"{WAYBAR_CONFIG}.bak")
+                content = WAYBAR_CONFIG.read_text()
+                clean = re.sub(r'//.*', '', content)
+                data = json.loads(clean)
+                data["modules-right"] = ordered
+                WAYBAR_CONFIG.write_text(json.dumps(data, indent=4))
+        except Exception as e:
+            print(f"Error saving waybar config: {e}", file=sys.stderr)
+
+        # Trigger live reload
+        subprocess.Popen(["killall", "-SIGUSR2", "waybar"], stderr=subprocess.DEVNULL)
+        self.populate_module_rows()
+        self.refresh_modules_ui()
+
+    def switch_tab(self, tab_name):
+        self.active_tab = tab_name
+        self.update_tab_headers()
+
+        if tab_name == "theme":
+            self.refresh_theme_ui()
+            self.stack.set_visible_child_name("theme")
+        elif tab_name == "wallpaper":
+            self.populate_wallpaper_rows()
+            self.refresh_wallpaper_ui()
+            self.stack.set_visible_child_name("wallpaper")
+        elif tab_name == "modules":
+            self.populate_module_rows()
+            self.refresh_modules_ui()
+            self.stack.set_visible_child_name("modules")
+
+    def refresh_theme_ui(self):
+        for i, btn in enumerate(self.theme_cards):
+            ctx = btn.get_style_context()
+            if i == self.theme_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def refresh_wallpaper_ui(self):
+        for i, btn in enumerate(self.wp_rows):
+            ctx = btn.get_style_context()
+            if i == self.wp_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def refresh_modules_ui(self):
+        for i, btn in enumerate(self.mod_rows):
+            ctx = btn.get_style_context()
+            if i == self.mod_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def apply_theme_choice(self, idx):
+        item = self.theme_items[idx]
+        theme_id = item["id"]
+        self.hide()
+        cleanup()
+        subprocess.Popen(["space-theme-switch", theme_id], start_new_session=True)
+        Gtk.main_quit()
+
+    def set_wallpaper_choice(self, idx):
+        if 0 <= idx < len(self.wp_file_paths):
+            path_str = self.wp_file_paths[idx]
+            subprocess.Popen(["space-wallpaper", "set", path_str], start_new_session=True)
+            GLib.timeout_add(150, self.populate_wallpaper_rows)
+
+    def cycle_wallpaper_now(self):
+        subprocess.Popen(["space-wallpaper", "next"], start_new_session=True)
+        GLib.timeout_add(150, self.populate_wallpaper_rows)
+
+    def on_key_press(self, widget, event):
+        keyname = Gdk.keyval_name(event.keyval)
+
+        if keyname in ["Escape", "q", "Q"]:
+            cleanup()
+            Gtk.main_quit()
+            return True
+
+        # Tab Switching Direct Hotkeys
+        if keyname in ["t", "T"]:
+            self.switch_tab("theme")
+            return True
+        if keyname in ["w", "W"]:
+            self.switch_tab("wallpaper")
+            return True
+        if keyname in ["m", "M"]:
+            self.switch_tab("modules")
+            return True
+
+        if self.active_tab == "theme":
+            if keyname in ["Down", "j", "J"]:
+                self.theme_selected_idx = (self.theme_selected_idx + 1) % len(self.theme_items)
+                self.refresh_theme_ui()
+                return True
+            if keyname in ["Up", "k", "K"]:
+                self.theme_selected_idx = (self.theme_selected_idx - 1 + len(self.theme_items)) % len(self.theme_items)
+                self.refresh_theme_ui()
+                return True
+            if keyname in ["Tab"]:
+                self.switch_tab("wallpaper")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("modules")
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.apply_theme_choice(self.theme_selected_idx)
+                return True
+            if keyname in ["1", "2", "3", "4"]:
+                idx = int(keyname) - 1
+                if 0 <= idx < len(self.theme_items):
+                    self.apply_theme_choice(idx)
+                    return True
+            return False
+
+        elif self.active_tab == "wallpaper":
+            if keyname in ["Down", "j", "J"]:
+                if self.wp_rows:
+                    self.wp_selected_idx = (self.wp_selected_idx + 1) % len(self.wp_rows)
+                    self.refresh_wallpaper_ui()
+                return True
+            if keyname in ["Up", "k", "K"]:
+                if self.wp_rows:
+                    self.wp_selected_idx = (self.wp_selected_idx - 1 + len(self.wp_rows)) % len(self.wp_rows)
+                    self.refresh_wallpaper_ui()
+                return True
+            if keyname in ["Tab"]:
+                self.switch_tab("modules")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("theme")
+                return True
+            if keyname in ["c", "C"]:
+                self.cycle_wallpaper_now()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.set_wallpaper_choice(self.wp_selected_idx)
+                return True
+            return False
+
+        elif self.active_tab == "modules":
+            if keyname in ["Down", "j", "J"]:
+                self.mod_selected_idx = (self.mod_selected_idx + 1) % len(ALL_WAYBAR_MODULES)
+                self.refresh_modules_ui()
+                return True
+            if keyname in ["Up", "k", "K"]:
+                self.mod_selected_idx = (self.mod_selected_idx - 1 + len(ALL_WAYBAR_MODULES)) % len(ALL_WAYBAR_MODULES)
+                self.refresh_modules_ui()
+                return True
+            if keyname in ["Tab"]:
+                self.switch_tab("theme")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("wallpaper")
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.toggle_waybar_module(self.mod_selected_idx)
+                return True
+            if keyname in ["1", "2", "3", "4", "5", "6", "7"]:
+                idx = int(keyname) - 1
+                if 0 <= idx < len(ALL_WAYBAR_MODULES):
+                    self.toggle_waybar_module(idx)
+                    return True
+            return False
+
+        return False
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def main():
+    check_singleton()
+    init_tab = "theme"
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in ["wallpaper", "wallpapers", "wp"]:
+            init_tab = "wallpaper"
+        elif arg in ["modules", "waybar", "bar"]:
+            init_tab = "modules"
+
+    win = SpaceThemeConfigDialog(initial_tab=init_tab)
+    win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
