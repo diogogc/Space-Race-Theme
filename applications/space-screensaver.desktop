@@ -6,4 +6,5 @@ Icon=preferences-desktop-screensaver
 Terminal=false
 Type=Application
 Categories=Utility;
+NoDisplay=true
 Keywords=screensaver;space;orbit;arch;8bit;apollo;

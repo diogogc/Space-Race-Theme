@@ -6,5 +6,6 @@ Exec=/home/diogo/.local/bin/space-theme-switch next
 Icon=preferences-desktop-theme
 Terminal=false
 Type=Application
-Categories=Settings;DesktopSettings;
+Categories=Utility;
+NoDisplay=true
 Keywords=theme;space;apollo;nasa;crt;amber;green;kosmos;vfd;

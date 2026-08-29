@@ -4,7 +4,8 @@ Apollo Mission Control Visual Avionics & Theme Configurator
 Unified GUI for:
   1) Mission Theme Profiles (NASA, CRT-Amber, CRT-Green, Kosmos-VFD)
   2) Per-Theme Wallpaper Matrix & Dynamic In-Theme Cycler
-  3) Waybar Menubar Module Visibility Matrix & Live Rebuild
+  3) 8-Bit Orbital Screensaver & Idle Lockscreen Avionics
+  4) Waybar Menubar Module Visibility Matrix & Live Rebuild
 Strict Zero-White-Background Policy across all 4 space mission themes.
 """
 import sys
@@ -26,6 +27,8 @@ PID_FILE = f"/tmp/space-theme-config-{os.getuid()}.pid"
 THEMES_DIR = Path(os.path.expanduser("~/.config/themes"))
 CURRENT_THEME_FILE = THEMES_DIR / "current_theme"
 WAYBAR_CONFIG = Path(os.path.expanduser("~/.config/waybar/config.jsonc"))
+SCREENSAVER_DIR = Path(os.path.expanduser("~/.config/space-screensaver"))
+SCREENSAVER_CONFIG = SCREENSAVER_DIR / "config.json"
 
 THEMES = {
     "nasa": {
@@ -102,6 +105,26 @@ THEMES = {
     }
 }
 
+TIMEOUT_PRESETS = [
+    (0, "OFF"),
+    (1, "1m"),
+    (2, "2m"),
+    (5, "5m (Def)"),
+    (10, "10m"),
+    (15, "15m"),
+    (30, "30m"),
+    (60, "1h"),
+]
+
+SCENE_PRESETS = [
+    ("all", "1. All Scenes (Orbital Cycle)"),
+    ("arch", "2. Arch Spacecraft Earth Orbit"),
+    ("nasa", "3. Apollo 11 Meatball Insignia"),
+    ("lunar", "4. Apollo Lunar Module Landing"),
+    ("soviet", "5. Soviet Space Program Star"),
+    ("gagarin", "6. Vostok-1 Yuri Gagarin 1961"),
+]
+
 ALL_WAYBAR_MODULES = [
     {"id": "custom/tools", "label": "TOOL - Operations & Capture Console", "default": True},
     {"id": "custom/iss", "label": "ISS - Orbital Tracking Telemetry", "default": True},
@@ -122,6 +145,27 @@ def get_current_theme():
             pass
     return "nasa"
 
+def load_screensaver_config():
+    SCREENSAVER_DIR.mkdir(parents=True, exist_ok=True)
+    if SCREENSAVER_CONFIG.exists():
+        try:
+            return json.loads(SCREENSAVER_CONFIG.read_text())
+        except Exception:
+            pass
+    return {
+        "timeout_minutes": 5,
+        "lock_on_wake": False,
+        "scene_mode": "all"
+    }
+
+def save_screensaver_config(cfg):
+    SCREENSAVER_DIR.mkdir(parents=True, exist_ok=True)
+    SCREENSAVER_CONFIG.write_text(json.dumps(cfg, indent=2))
+    try:
+        subprocess.run(["killall", "-USR1", "space-idle-daemon"], check=False, capture_output=True)
+    except Exception:
+        pass
+
 class SpaceThemeConfigDialog(Gtk.Window):
     def __init__(self, initial_tab="theme"):
         super().__init__(title="Apollo Theme & Visual Avionics Configurator")
@@ -130,19 +174,24 @@ class SpaceThemeConfigDialog(Gtk.Window):
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_default_size(680, 580)
+        self.set_default_size(700, 600)
 
         self.current_theme = get_current_theme()
         self.pal = THEMES.get(self.current_theme, THEMES["nasa"])
         self.active_tab = initial_tab
 
+        # Screensaver State
+        self.ss_cfg = load_screensaver_config()
+
         # Navigation State
         self.theme_selected_idx = 0
         self.wp_selected_idx = 0
+        self.ss_selected_idx = 0
         self.mod_selected_idx = 0
 
         self.theme_cards = []
         self.wp_rows = []
+        self.ss_rows = []
         self.mod_rows = []
 
         self.apply_css()
@@ -175,7 +224,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
             border: 1px solid {self.pal['btn_border']};
             border-bottom: none;
             border-radius: {self.pal['radius']} {self.pal['radius']} 0 0;
-            padding: 8px 14px;
+            padding: 7px 12px;
             transition: all 0.15s ease;
         }}
         .nav-tab.active {{
@@ -187,14 +236,14 @@ class SpaceThemeConfigDialog(Gtk.Window):
             background-color: {self.pal['bg_card']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 10px 14px;
-            margin-bottom: 8px;
+            padding: 9px 12px;
+            margin-bottom: 6px;
         }}
         .tool-row {{
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 8px 12px;
+            padding: 7px 10px;
             transition: all 0.15s ease;
         }}
         .tool-row.selected {{
@@ -208,7 +257,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 8px 14px;
+            padding: 6px 10px;
             transition: all 0.15s ease;
         }}
         .action-btn.selected {{
@@ -237,12 +286,12 @@ class SpaceThemeConfigDialog(Gtk.Window):
 
         utc_str = time.strftime('%H:%M:%S UTC', time.gmtime())
         sub = Gtk.Label()
-        sub.set_markup(f"<span font_size='8500' foreground='{self.pal['green']}'>[ ACTIVE PROFILE: {self.current_theme.upper()} ]</span> <span font_size='8500' foreground='{self.pal['text_dim']}'>| UTC: {utc_str}</span>")
+        sub.set_markup(f"<span font_size='8500' foreground='{self.pal['green']}'>[ ACTIVE: {self.current_theme.upper()} ]</span> <span font_size='8500' foreground='{self.pal['text_dim']}'>| UTC: {utc_str}</span>")
         sub.set_xalign(0.0)
         header.pack_start(sub, False, False, 0)
         root_vbox.pack_start(header, False, False, 0)
 
-        # 2. Navigation Tab Bar (3 Tabs)
+        # 2. Navigation Tab Bar (4 Tabs)
         tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tab_bar.get_style_context().add_class("tab-bar")
 
@@ -262,7 +311,15 @@ class SpaceThemeConfigDialog(Gtk.Window):
         self.tab_wallpaper.connect("button-press-event", lambda w, e: self.switch_tab("wallpaper"))
         tab_bar.pack_start(self.tab_wallpaper, False, False, 0)
 
-        # Tab 3: Waybar Modules
+        # Tab 3: Screensaver & Idle
+        self.tab_screensaver = Gtk.EventBox()
+        self.tab_screensaver.get_style_context().add_class("nav-tab")
+        self.lbl_tab_screensaver = Gtk.Label()
+        self.tab_screensaver.add(self.lbl_tab_screensaver)
+        self.tab_screensaver.connect("button-press-event", lambda w, e: self.switch_tab("screensaver"))
+        tab_bar.pack_start(self.tab_screensaver, False, False, 0)
+
+        # Tab 4: Waybar Modules
         self.tab_modules = Gtk.EventBox()
         self.tab_modules.get_style_context().add_class("nav-tab")
         self.lbl_tab_modules = Gtk.Label()
@@ -281,6 +338,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
         # Build Tab Pages
         self.build_theme_tab()
         self.build_wallpaper_tab()
+        self.build_screensaver_tab()
         self.build_modules_tab()
 
         # 4. Footer Hint
@@ -300,26 +358,37 @@ class SpaceThemeConfigDialog(Gtk.Window):
     def update_tab_headers(self):
         self.tab_theme.get_style_context().remove_class("active")
         self.tab_wallpaper.get_style_context().remove_class("active")
+        self.tab_screensaver.get_style_context().remove_class("active")
         self.tab_modules.get_style_context().remove_class("active")
 
         if self.active_tab == "theme":
             self.tab_theme.get_style_context().add_class("active")
-            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🎨 [T] MISSION THEMES</span>")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR BAR</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / W / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-4 / ENTER ] APPLY THEME   [ ESC ] CLOSE</span>")
+            self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / W / S / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-4 / ENTER ] APPLY THEME   [ ESC ] CLOSE</span>")
         elif self.active_tab == "wallpaper":
             self.tab_wallpaper.get_style_context().add_class("active")
-            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] MISSION THEMES</span>")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🌌 [W] WALLPAPERS</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR BAR</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ ENTER ] SET WALLPAPER   [ C ] CYCLE   [ ESC ] CLOSE</span>")
+            self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / S / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ ENTER ] SET WALLPAPER   [ C ] CYCLE (Super+Alt+W)   [ ESC ] CLOSE</span>")
+        elif self.active_tab == "screensaver":
+            self.tab_screensaver.get_style_context().add_class("active")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
+            self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
+            self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛸 [S] SCREENSAVER</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / ENTER ] SELECT   [ P ] PREVIEW   [ ESC ] CLOSE</span>")
         elif self.active_tab == "modules":
             self.tab_modules.get_style_context().add_class("active")
-            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] MISSION THEMES</span>")
+            self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📊 [M] WAYBAR BAR</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / 1-7 ] TOGGLE   [ ESC ] CLOSE</span>")
+            self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📊 [M] WAYBAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / 1-7 ] TOGGLE   [ ESC ] CLOSE</span>")
 
     def build_theme_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -376,7 +445,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox.set_margin_left(16)
         vbox.set_margin_right(16)
 
-        # Wallpaper Header Actions Card
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         card.get_style_context().add_class("card-panel")
 
@@ -390,7 +458,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
         card.pack_start(btn_cycle, False, False, 0)
         vbox.pack_start(card, False, False, 0)
 
-        # Wallpaper List Container (Scrolled)
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_min_content_height(340)
@@ -457,6 +524,142 @@ class SpaceThemeConfigDialog(Gtk.Window):
 
         self.wp_list_container.show_all()
 
+    def build_screensaver_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        # Header with instant preview button
+        top_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        top_card.get_style_context().add_class("card-panel")
+
+        lbl_ss_head = Gtk.Label()
+        lbl_ss_head.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_main']}'>🛸 8-BIT ORBITAL SCREENSAVER &amp; LOCKSCREEN</span>\n<span font_size='8000' foreground='{self.pal['text_dim']}'>23° Inclination orbital dynamics with retro telemetry lock</span>")
+        lbl_ss_head.set_xalign(0.0)
+        top_card.pack_start(lbl_ss_head, True, True, 0)
+
+        btn_preview = Gtk.Button(label="⚡ Launch Preview (Super+Shift+O)")
+        btn_preview.get_style_context().add_class("action-btn")
+        btn_preview.connect("clicked", lambda w: self.preview_screensaver())
+        top_card.pack_start(btn_preview, False, False, 0)
+        vbox.pack_start(top_card, False, False, 0)
+
+        # Settings List Container
+        self.ss_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        vbox.pack_start(self.ss_container, True, True, 0)
+
+        self.populate_screensaver_rows()
+        self.stack.add_named(vbox, "screensaver")
+
+    def populate_screensaver_rows(self):
+        for child in self.ss_container.get_children():
+            self.ss_container.remove(child)
+
+        self.ss_rows = []
+
+        # 1. Idle Timeout Row
+        curr_to = self.ss_cfg.get("timeout_minutes", 5)
+        btn_to = Gtk.EventBox()
+        btn_to.get_style_context().add_class("tool-row")
+        to_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_to.add(to_box)
+
+        lbl_to_t = Gtk.Label()
+        to_str = "OFF / NEVER" if curr_to == 0 else f"{curr_to} MINUTES"
+        lbl_to_t.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>⏱️ IDLE ACTIVATION TIMEOUT:</span> <span foreground='{self.pal['green']}'><b>[{to_str}]</b></span>\n<span font_size='7500' foreground='{self.pal['text_dim']}'>Click or press Enter to cycle timeout duration</span>")
+        lbl_to_t.set_xalign(0.0)
+        to_box.pack_start(lbl_to_t, True, True, 0)
+
+        btn_to.connect("button-press-event", lambda w, e: self.cycle_ss_timeout())
+        self.ss_rows.append(btn_to)
+        self.ss_container.pack_start(btn_to, False, False, 0)
+
+        # 2. Lock on Wake Toggle
+        curr_lock = self.ss_cfg.get("lock_on_wake", False)
+        btn_lk = Gtk.EventBox()
+        btn_lk.get_style_context().add_class("tool-row")
+        lk_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_lk.add(lk_box)
+
+        lbl_lk_t = Gtk.Label()
+        lk_str = "[✔ ARMED (Requires Password on Wake)]" if curr_lock else "[   DISABLED (No Lock on Wake)]"
+        lk_col = self.pal['green'] if curr_lock else self.pal['text_dim']
+        lbl_lk_t.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>🔒 HYPRLOCK SECURITY ON WAKE:</span> <span foreground='{lk_col}'><b>{lk_str}</b></span>\n<span font_size='7500' foreground='{self.pal['text_dim']}'>Engage Apollo AGC DSKY numeric lock upon keyboard/mouse activity</span>")
+        lbl_lk_t.set_xalign(0.0)
+        lk_box.pack_start(lbl_lk_t, True, True, 0)
+
+        btn_lk.connect("button-press-event", lambda w, e: self.toggle_ss_lock())
+        self.ss_rows.append(btn_lk)
+        self.ss_container.pack_start(btn_lk, False, False, 0)
+
+        # 3. Scene Presets List
+        curr_scene = self.ss_cfg.get("scene_mode", "all")
+        scene_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        scene_panel.get_style_context().add_class("card-panel")
+
+        sc_title = Gtk.Label()
+        sc_title.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>🎬 ACTIVE RETRO SCENE SEQUENCE</span>")
+        sc_title.set_xalign(0.0)
+        scene_panel.pack_start(sc_title, False, False, 0)
+
+        for sc_id, sc_name in SCENE_PRESETS:
+            sc_btn = Gtk.EventBox()
+            sc_btn.get_style_context().add_class("tool-row")
+            is_active = (sc_id == curr_scene)
+            if is_active:
+                sc_btn.get_style_context().add_class("active-theme")
+
+            sc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            sc_btn.add(sc_row)
+
+            chk_txt = "[●]" if is_active else "[○]"
+            chk_col = self.pal['green'] if is_active else self.pal['text_dim']
+            chk_lbl = Gtk.Label()
+            chk_lbl.set_markup(f"<span font_weight='bold' foreground='{chk_col}'>{chk_txt}</span>")
+            sc_row.pack_start(chk_lbl, False, False, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_main']}'>{sc_name}</span>")
+            t_lbl.set_xalign(0.0)
+            sc_row.pack_start(t_lbl, True, True, 0)
+
+            sc_btn.connect("button-press-event", lambda w, e, s=sc_id: self.set_ss_scene(s))
+            self.ss_rows.append(sc_btn)
+            scene_panel.pack_start(sc_btn, False, False, 0)
+
+        self.ss_container.pack_start(scene_panel, True, True, 0)
+        self.ss_container.show_all()
+
+    def cycle_ss_timeout(self):
+        curr = self.ss_cfg.get("timeout_minutes", 5)
+        to_vals = [t[0] for t in TIMEOUT_PRESETS]
+        try:
+            idx = to_vals.index(curr)
+            nxt = to_vals[(idx + 1) % len(to_vals)]
+        except Exception:
+            nxt = 5
+        self.ss_cfg["timeout_minutes"] = nxt
+        save_screensaver_config(self.ss_cfg)
+        self.populate_screensaver_rows()
+        self.refresh_screensaver_ui()
+
+    def toggle_ss_lock(self):
+        self.ss_cfg["lock_on_wake"] = not self.ss_cfg.get("lock_on_wake", False)
+        save_screensaver_config(self.ss_cfg)
+        self.populate_screensaver_rows()
+        self.refresh_screensaver_ui()
+
+    def set_ss_scene(self, scene_id):
+        self.ss_cfg["scene_mode"] = scene_id
+        save_screensaver_config(self.ss_cfg)
+        self.populate_screensaver_rows()
+        self.refresh_screensaver_ui()
+
+    def preview_screensaver(self):
+        subprocess.Popen(["space-screensaver"], start_new_session=True)
+
     def build_modules_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         vbox.set_margin_top(8)
@@ -464,7 +667,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox.set_margin_left(16)
         vbox.set_margin_right(16)
 
-        # Header card
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         card.get_style_context().add_class("card-panel")
 
@@ -479,7 +681,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
         card.pack_start(l2, False, False, 0)
         vbox.pack_start(card, False, False, 0)
 
-        # Modules list container
         self.mod_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         vbox.pack_start(self.mod_container, True, True, 0)
 
@@ -491,7 +692,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
             return [m["id"] for m in ALL_WAYBAR_MODULES if m["default"]]
         try:
             content = WAYBAR_CONFIG.read_text()
-            # Clean comments for JSON parsing
             clean = re.sub(r'//.*', '', content)
             data = json.loads(clean)
             return data.get("modules-right", [])
@@ -504,7 +704,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
 
         active_mods = self.get_active_waybar_modules()
         self.mod_rows = []
-        self.mod_switches = []
 
         for i, mod in enumerate(ALL_WAYBAR_MODULES):
             btn = Gtk.EventBox()
@@ -541,13 +740,11 @@ class SpaceThemeConfigDialog(Gtk.Window):
         else:
             active_mods.append(mod_id)
 
-        # Reorder to match standard hierarchy
         ordered = []
         for m in ALL_WAYBAR_MODULES:
             if m["id"] in active_mods:
                 ordered.append(m["id"])
 
-        # Write safely to config.jsonc
         try:
             if WAYBAR_CONFIG.exists():
                 shutil.copyfile(WAYBAR_CONFIG, f"{WAYBAR_CONFIG}.bak")
@@ -559,7 +756,6 @@ class SpaceThemeConfigDialog(Gtk.Window):
         except Exception as e:
             print(f"Error saving waybar config: {e}", file=sys.stderr)
 
-        # Trigger live reload
         subprocess.Popen(["killall", "-SIGUSR2", "waybar"], stderr=subprocess.DEVNULL)
         self.populate_module_rows()
         self.refresh_modules_ui()
@@ -575,6 +771,10 @@ class SpaceThemeConfigDialog(Gtk.Window):
             self.populate_wallpaper_rows()
             self.refresh_wallpaper_ui()
             self.stack.set_visible_child_name("wallpaper")
+        elif tab_name == "screensaver":
+            self.populate_screensaver_rows()
+            self.refresh_screensaver_ui()
+            self.stack.set_visible_child_name("screensaver")
         elif tab_name == "modules":
             self.populate_module_rows()
             self.refresh_modules_ui()
@@ -592,6 +792,14 @@ class SpaceThemeConfigDialog(Gtk.Window):
         for i, btn in enumerate(self.wp_rows):
             ctx = btn.get_style_context()
             if i == self.wp_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def refresh_screensaver_ui(self):
+        for i, btn in enumerate(self.ss_rows):
+            ctx = btn.get_style_context()
+            if i == self.ss_selected_idx:
                 ctx.add_class("selected")
             else:
                 ctx.remove_class("selected")
@@ -630,12 +838,14 @@ class SpaceThemeConfigDialog(Gtk.Window):
             Gtk.main_quit()
             return True
 
-        # Tab Switching Direct Hotkeys
         if keyname in ["t", "T"]:
             self.switch_tab("theme")
             return True
         if keyname in ["w", "W"]:
             self.switch_tab("wallpaper")
+            return True
+        if keyname in ["s", "S"]:
+            self.switch_tab("screensaver")
             return True
         if keyname in ["m", "M"]:
             self.switch_tab("modules")
@@ -678,7 +888,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
                     self.refresh_wallpaper_ui()
                 return True
             if keyname in ["Tab"]:
-                self.switch_tab("modules")
+                self.switch_tab("screensaver")
                 return True
             if keyname in ["ISO_Left_Tab"]:
                 self.switch_tab("theme")
@@ -688,6 +898,38 @@ class SpaceThemeConfigDialog(Gtk.Window):
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
                 self.set_wallpaper_choice(self.wp_selected_idx)
+                return True
+            return False
+
+        elif self.active_tab == "screensaver":
+            if keyname in ["Down", "j", "J"]:
+                if self.ss_rows:
+                    self.ss_selected_idx = (self.ss_selected_idx + 1) % len(self.ss_rows)
+                    self.refresh_screensaver_ui()
+                return True
+            if keyname in ["Up", "k", "K"]:
+                if self.ss_rows:
+                    self.ss_selected_idx = (self.ss_selected_idx - 1 + len(self.ss_rows)) % len(self.ss_rows)
+                    self.refresh_screensaver_ui()
+                return True
+            if keyname in ["Tab"]:
+                self.switch_tab("modules")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("wallpaper")
+                return True
+            if keyname in ["p", "P"]:
+                self.preview_screensaver()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                if self.ss_selected_idx == 0:
+                    self.cycle_ss_timeout()
+                elif self.ss_selected_idx == 1:
+                    self.toggle_ss_lock()
+                elif 2 <= self.ss_selected_idx < len(self.ss_rows):
+                    scene_idx = self.ss_selected_idx - 2
+                    if 0 <= scene_idx < len(SCENE_PRESETS):
+                        self.set_ss_scene(SCENE_PRESETS[scene_idx][0])
                 return True
             return False
 
@@ -704,7 +946,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
                 self.switch_tab("theme")
                 return True
             if keyname in ["ISO_Left_Tab"]:
-                self.switch_tab("wallpaper")
+                self.switch_tab("screensaver")
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
                 self.toggle_waybar_module(self.mod_selected_idx)
@@ -761,6 +1003,8 @@ def main():
         arg = sys.argv[1].lower()
         if arg in ["wallpaper", "wallpapers", "wp"]:
             init_tab = "wallpaper"
+        elif arg in ["screensaver", "ss", "idle"]:
+            init_tab = "screensaver"
         elif arg in ["modules", "waybar", "bar"]:
             init_tab = "modules"
 
