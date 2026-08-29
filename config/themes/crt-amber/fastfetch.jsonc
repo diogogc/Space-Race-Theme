@@ -1,0 +1,78 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "file",
+    "source": "~/.config/fastfetch/logo.txt",
+    "color": {
+      "1": "yellow",
+      "2": "yellow"
+    },
+    "padding": {
+      "top": 1,
+      "left": 2,
+      "right": 3
+    }
+  },
+  "display": {
+    "separator": " ⫸ ",
+    "color": {
+      "keys": "yellow",
+      "title": "yellow"
+    }
+  },
+  "modules": [
+    "title",
+    {
+      "type": "custom",
+      "format": "────────────────────────────────────────"
+    },
+    {
+      "type": "os",
+      "key": "󰣇 MAINFRAME",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "kernel",
+      "key": " KERNEL/OS",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "wm",
+      "key": " MULTIPLEX",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "terminal",
+      "key": " TERMINAL",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "shell",
+      "key": "󰞷 SHELL BATCH",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "cpu",
+      "key": "󰻠 CPU LOGIC",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "memory",
+      "key": "󰑭 CORE STORAGE",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "uptime",
+      "key": "󱑎 RUNTIME MET",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "custom",
+      "format": "────────────────────────────────────────"
+    },
+    {
+      "type": "colors",
+      "symbol": "circle"
+    }
+  ]
+}

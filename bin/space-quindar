@@ -14,21 +14,42 @@ import json
 import subprocess
 import shutil
 
-CONFIG_FILE = os.path.expanduser("~/.config/spaceera/audio-config.json")
-SOUND_DIR = os.path.expanduser("~/.config/spaceera/sounds")
+CONFIG_FILE = os.path.expanduser("~/.config/space-theme/audio-config.json")
+SOUND_DIRS = [
+    os.path.expanduser("~/.config/space-theme/sounds"),
+    os.path.expanduser("~/.config/spaceera/sounds"),
+    os.path.expanduser("~/Space-Race-Theme/sounds"),
+    "/usr/share/sounds/space-theme",
+]
 
 SOUND_MAP = {
     "intro": "quindar-intro.wav",
     "outro": "quindar-outro.wav",
     "beep": "quindar-beep.wav",
     "acquired": "iss-acquired.wav",
-    "alert": "iss-acquired.wav",
+    "alert": "alarm-1202.wav",
+    "alarm": "alarm-1202.wav",
+    "shutter": "shutter.wav",
+    "capture": "shutter.wav",
+    "relay": "relay-latch.wav",
+    "theme-switch": "relay-latch.wav",
+    "switch": "relay-latch.wav",
+    "lock": "lock.wav",
+    "unlock": "unlock.wav",
 }
 
 def load_config():
     if os.path.isfile(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # Fallback to spaceera legacy config
+    legacy = os.path.expanduser("~/.config/spaceera/audio-config.json")
+    if os.path.isfile(legacy):
+        try:
+            with open(legacy, "r") as f:
                 return json.load(f)
         except Exception:
             pass
@@ -48,11 +69,17 @@ def play_sound(sound_name):
         return
 
     wav_file = os.path.basename(SOUND_MAP[sound_name])
-    wav_path = os.path.join(SOUND_DIR, wav_file)
-    if not os.path.isfile(wav_path):
+    wav_path = None
+    for sdir in SOUND_DIRS:
+        cand = os.path.join(sdir, wav_file)
+        if os.path.isfile(cand):
+            wav_path = cand
+            break
+
+    if not wav_path:
         return
 
-    player = shutil.which("pw-play") or shutil.which("paplay")
+    player = shutil.which("pw-play") or shutil.which("paplay") or shutil.which("aplay")
     if not player:
         return
 

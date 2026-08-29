@@ -1,0 +1,83 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "file",
+    "source": "~/.config/fastfetch/logo.txt",
+    "color": {
+      "1": "yellow",
+      "2": "cyan"
+    },
+    "padding": {
+      "top": 1,
+      "left": 2,
+      "right": 3
+    }
+  },
+  "display": {
+    "separator": " ⫸ ",
+    "color": {
+      "keys": "yellow",
+      "title": "cyan"
+    }
+  },
+  "modules": [
+    "title",
+    {
+      "type": "custom",
+      "format": "────────────────────────────────────────"
+    },
+    {
+      "type": "os",
+      "key": "󰣇 SYSTEM",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "kernel",
+      "key": " KERNEL",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "wm",
+      "key": " DISPATCH",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "terminal",
+      "key": " CONSOLE",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "shell",
+      "key": "󰞷 COMMAND",
+      "keyColor": "yellow"
+    },
+    {
+      "type": "cpu",
+      "key": "󰻠 AVIONICS",
+      "keyColor": "green"
+    },
+    {
+      "type": "gpu",
+      "key": "󰍹 GUIDANCE",
+      "keyColor": "green"
+    },
+    {
+      "type": "memory",
+      "key": "󰑭 TELEMETRY",
+      "keyColor": "green"
+    },
+    {
+      "type": "uptime",
+      "key": "󱑎 MET UPTIME",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "custom",
+      "format": "────────────────────────────────────────"
+    },
+    {
+      "type": "colors",
+      "symbol": "circle"
+    }
+  ]
+}

@@ -59,11 +59,11 @@ def send_notification(title, message, icon_path=None):
     except Exception:
         pass
 
-def play_feedback_tone():
-    """Play brief confirmation Quindar tone if available."""
+def play_feedback_tone(tone="shutter"):
+    """Play authentic Apollo sound feedback if available."""
     if shutil.which("space-quindar"):
         try:
-            subprocess.Popen(["space-quindar"], start_new_session=True)
+            subprocess.Popen(["space-quindar", tone], start_new_session=True)
         except Exception:
             pass
 

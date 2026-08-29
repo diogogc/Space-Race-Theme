@@ -1,0 +1,78 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "file",
+    "source": "~/.config/fastfetch/logo.txt",
+    "color": {
+      "1": "cyan",
+      "2": "red"
+    },
+    "padding": {
+      "top": 1,
+      "left": 2,
+      "right": 3
+    }
+  },
+  "display": {
+    "separator": " ⫸ ",
+    "color": {
+      "keys": "cyan",
+      "title": "red"
+    }
+  },
+  "modules": [
+    "title",
+    {
+      "type": "custom",
+      "format": "────────────────────────────────────────"
+    },
+    {
+      "type": "os",
+      "key": "󰣇 СИСТЕМА",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "kernel",
+      "key": " ЯДРО",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "wm",
+      "key": " ДИСПЕТЧЕР",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "terminal",
+      "key": " ТЕРМИНАЛ",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "shell",
+      "key": "󰞷 КОМАНДА",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "cpu",
+      "key": "󰻠 АВИОНИКА",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "memory",
+      "key": "󰑭 ТЕЛЕМЕТРИЯ",
+      "keyColor": "cyan"
+    },
+    {
+      "type": "uptime",
+      "key": "󱑎 ВРЕМЯ ПОЛЕТА",
+      "keyColor": "red"
+    },
+    {
+      "type": "custom",
+      "format": "────────────────────────────────────────"
+    },
+    {
+      "type": "colors",
+      "symbol": "circle"
+    }
+  ]
+}

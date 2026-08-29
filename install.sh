@@ -61,8 +61,11 @@ mkdir -p "$HOME/.config/dunst"
 mkdir -p "$HOME/.config/fastfetch"
 mkdir -p "$HOME/.config/tmux"
 mkdir -p "$HOME/.config/themes"
+mkdir -p "$HOME/.config/space-theme/sounds"
+mkdir -p "$HOME/.config/spaceera/sounds"
 mkdir -p "$HOME/.config/space-screensaver"
 mkdir -p "$HOME/.local/share/applications"
+mkdir -p "$HOME/.local/share/icons"
 mkdir -p "$HOME/Pictures/Wallpapers/historical"
 
 if [[ "$MODE" == "link" ]]; then
@@ -82,6 +85,19 @@ if [[ "$MODE" == "link" ]]; then
     for d in "$SCRIPT_DIR/config/themes/"*; do
         bname=$(basename "$d")
         ln -sfn "$d" "$HOME/.config/themes/$bname"
+    done
+
+    echo "==> Linking cursor themes to ~/.local/share/icons..."
+    for d in "$SCRIPT_DIR/icons/"*; do
+        bname=$(basename "$d")
+        ln -sfn "$d" "$HOME/.local/share/icons/$bname"
+    done
+
+    echo "==> Linking sound effects..."
+    for f in "$SCRIPT_DIR/sounds/"*.wav; do
+        bname=$(basename "$f")
+        ln -sf "$f" "$HOME/.config/space-theme/sounds/$bname"
+        ln -sf "$f" "$HOME/.config/spaceera/sounds/$bname"
     done
 
     echo "==> Linking Hyprland, Waybar, Kitty, Dunst, Fastfetch, Tmux, Zsh configs..."
@@ -125,6 +141,13 @@ else
 
     echo "==> Installing theme palettes to ~/.config/themes..."
     cp -r "$SCRIPT_DIR/config/themes/"* "$HOME/.config/themes/"
+
+    echo "==> Installing cursor themes..."
+    cp -r "$SCRIPT_DIR/icons/"* "$HOME/.local/share/icons/" 2>/dev/null || true
+
+    echo "==> Installing sound effects..."
+    cp "$SCRIPT_DIR/sounds/"*.wav "$HOME/.config/space-theme/sounds/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/sounds/"*.wav "$HOME/.config/spaceera/sounds/" 2>/dev/null || true
 
     echo "==> Installing Hyprland, Waybar, Kitty, Dunst, Fastfetch, Tmux, Zsh configs..."
     cp -r "$SCRIPT_DIR/config/hypr/"* "$HOME/.config/hypr/"

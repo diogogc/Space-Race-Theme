@@ -107,7 +107,32 @@ def get_telemetry():
     css_class = "normal"
     try:
         cap_int = int(capacity)
-        if cap_int <= 15:
+        if cap_int <= 15 and status.lower() == "discharging":
+            css_class = "critical"
+            # Trigger 1202 alarm once every 5 minutes on critical power
+            alarm_file = "/tmp/space-bat-alarm.last"
+            import time
+            now = time.time()
+            last_alarm = 0
+            if os.path.isfile(alarm_file):
+                try:
+                    with open(alarm_file, "r") as af:
+                        last_alarm = float(af.read().strip())
+                except Exception:
+                    pass
+            if now - last_alarm > 300:
+                try:
+                    with open(alarm_file, "w") as af:
+                        af.write(str(now))
+                    subprocess.Popen(["space-quindar", "alarm"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.Popen([
+                        "notify-send", "-u", "critical", "-a", "Flight Avionics",
+                        "⚠️ 1202 PROGRAM ALARM: BUS VOLTAGE CRITICAL",
+                        f"Main Battery Level: {capacity}%\nEngage emergency power conservation."
+                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+        elif cap_int <= 15:
             css_class = "critical"
         elif cap_int <= 30:
             css_class = "warning"
