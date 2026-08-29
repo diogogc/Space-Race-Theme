@@ -326,12 +326,12 @@ class SpaceDisplayDialog(Gtk.Window):
             row_box.pack_start(text_vbox, True, True, 0)
 
             t_lbl = Gtk.Label()
-            t_lbl.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>{item['title']}</span>")
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>{GLib.markup_escape_text(item['title'])}</span>")
             t_lbl.set_xalign(0.0)
             text_vbox.pack_start(t_lbl, False, False, 0)
 
             s_lbl = Gtk.Label()
-            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
+            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{GLib.markup_escape_text(item['sub'])}</span>")
             s_lbl.set_xalign(0.0)
             text_vbox.pack_start(s_lbl, False, False, 0)
 
