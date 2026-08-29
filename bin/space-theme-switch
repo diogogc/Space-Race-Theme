@@ -95,10 +95,27 @@ fi
 
 # 4. Wallpaper
 if [[ -f "$THEMES_DIR/$target/wallpaper.jpg" ]]; then
-  ln -sf "$THEMES_DIR/$target/wallpaper.jpg" "$HOME/.config/hypr/wallpaper-current.jpg"
+  target_wp="$(readlink -f "$THEMES_DIR/$target/wallpaper.jpg" || echo "$THEMES_DIR/$target/wallpaper.jpg")"
+  ln -sf "$target_wp" "$HOME/.config/hypr/wallpaper-current.jpg"
+
+  # Ensure hyprpaper.conf always points to wallpaper-current.jpg
+  cat << 'HYPRPAPER_EOF' > "$HOME/.config/hypr/hyprpaper.conf"
+# Apollo Space Mission Control - Dynamic Wallpaper Sync
+preload = /home/diogo/.config/hypr/wallpaper-current.jpg
+wallpaper = , /home/diogo/.config/hypr/wallpaper-current.jpg
+splash = false
+ipc = true
+HYPRPAPER_EOF
+
   if command -v hyprpaper &>/dev/null; then
-    killall -9 hyprpaper 2>/dev/null || true
-    setsid hyprpaper >/dev/null 2>&1 &
+    if pgrep -x hyprpaper >/dev/null 2>&1; then
+      hyprctl hyprpaper preload "$target_wp" >/dev/null 2>&1 || true
+      hyprctl hyprpaper wallpaper ",$target_wp" >/dev/null 2>&1 || true
+      hyprctl hyprpaper unload all >/dev/null 2>&1 || true
+      hyprctl hyprpaper preload "$target_wp" >/dev/null 2>&1 || true
+    else
+      setsid hyprpaper >/dev/null 2>&1 &
+    fi
   elif command -v swaybg &>/dev/null; then
     killall swaybg 2>/dev/null || true
     setsid swaybg -i "$HOME/.config/hypr/wallpaper-current.jpg" -m fill >/dev/null 2>&1 &
