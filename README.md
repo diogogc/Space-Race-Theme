@@ -41,25 +41,50 @@ The environment features four authentic retro flight-deck profiles switchable in
 - **Audio Routing & Quindar Beeps (`space-capcom-dialog` / `space-quindar`)**: Volume dispatch, WirePlumber device switching, and authentic 2524 Hz Apollo test tones.
 - **ISS Orbital Tracker (`space-iss-dialog`)**: Real-time coordinates, crew complement, and ground pass telemetry for the International Space Station.
 
-### 4. 🐚 Hardened Zsh & Astronaut Starship Environment
+### 4. 🖳 Dynamic Theme Fastfetch Telemetry & Retro Phosphor Cursors
+- **Themed ASCII Banners**: Each mission profile renders authentic ASCII art (Saturn V for NASA, IBM System/360 for CRT-Amber, MIT AGC DSKY for CRT-Green, and Vostok-1/Sputnik for Kosmos-VFD).
+- **Phosphor Cursor Suites**: Standalone Wayland/XCursor themes (`Space-Retro-Amber`, `Space-Retro-Green`, `Space-Retro-Mint`) synchronized dynamically with mission profiles.
+
+### 5. 🔊 Space Annunciator Sound Engine (`space-quindar`)
+- **44.1 kHz PCM Audio Assets**: Mechanical camera shutter clicks (`space-capture`), solenoid relay latch sounds (`space-theme-switch`), Apollo Quindar beeps, lock/unlock sweeps, and authentic `1202 PROGRAM ALARM` critical power warnings (<15% battery).
+
+### 6. 🚀 Apollo HUD Window Switcher & Display Radar
+- **Attitude HUD Switcher (`space-switcher`)**: Real-time Alt+Tab / Super+Tab card overlay with cross-workspace window focus and direct app glyph resolution.
+- **Display Radar (`space-display`)**: Multi-monitor avionics controller for managing multi-head Wayland outputs and instant display layouts.
+- **Visual Avionics Configurator (`space-theme-config`)**: Graphical flight controller for tweaking theme parameters, screensaver settings, and live telemetry toggles.
+
+### 7. 🐚 Hardened Zsh & Astronaut Starship Environment
 - **Synchronized Prompt Profiles**: Each mission profile (`nasa`, `crt-amber`, `crt-green`, `kosmos-vfd`) includes a tailored `starship.toml` prompt reflecting the active chassis colors, custom mission symbols, and live git telemetry.
 - **Security & Secret Leak Hardening**: History configured with `HIST_IGNORE_SPACE`, strict `0600` permissions on `.zsh_history`, deduplication, and safe execution path sanitization.
-- **Fastfetch Mission Telemetry**: Custom system telemetry hardware matrix formatted with mission control indicators upon shell login (`fetch`).
 
 ---
 
-## ⌨️ Keybinding Cheatsheet
+## ⌨️ Flight Operations Keybinding Cheatsheet
 
 | Keybinding | Action / Command | Description |
 | :--- | :--- | :--- |
-| `SUPER + Space` | `dsky-launcher` | Apollo DSKY Mission Application Launcher |
-| `SUPER + V` | `space-theme-switch` | Flight Theme Selector Modal |
-| `SUPER + SHIFT + O` | `space-screensaver` | 8-Bit Retro Multi-Scene Screensaver |
-| `SUPER + SHIFT + P` | `space-screensaver-config` | Screensaver & Lockscreen Settings |
-| `SUPER + SHIFT + M` | `space-power-menu` | Emergency Flight Operations / Abort Menu |
+| `SUPER + Space` / `SUPER + R` | `dsky-launcher` | Apollo DSKY Mission Application Launcher |
+| `ALT + TAB` / `SUPER + TAB` | `space-switcher` | Apollo HUD Mission Window Switcher |
+| `SUPER + SHIFT + T` | `space-theme-switch next` | Cycle Mission Profile (NASA / CRT / Kosmos-VFD) |
+| `SUPER + ALT + T` | `space-theme-config` | Visual Avionics & Theme Configurator Modal |
+| `SUPER + ALT + W` | `space-wallpaper next` | Cycle In-Theme Historical Wallpaper |
+| `SUPER + SHIFT + R` | `space-display` | Display Radar & Multi-Monitor Console |
+| `SUPER + SHIFT + P` | `space-tools-dialog` | Mission Tools, Capture & Video Recording Studio |
+| `SUPER + SHIFT + C` | `space-telemetry-dialog` | System Hardware Telemetry & Task Abort Console |
+| `SUPER + SHIFT + N` | `space-network-dialog` | Communications & Wi-Fi Radar Console |
+| `SUPER + SHIFT + E` | `space-energy-dialog` | MDC-02 Power Telemetry & Energy Profiles |
+| `SUPER + SHIFT + V` | `space-capcom-dialog` | CAPCOM Audio Intercom & Dual VU Meters |
+| `SUPER + SHIFT + K` | `space-keybinds` | Keybinding Flight Guide & Cheatsheet Modal |
+| `SUPER + SHIFT + O` | `space-screensaver` | 8-Bit Retro Multi-Scene Screensaver (Instant Play) |
+| `SUPER + SHIFT + M` / `ESC` | `space-power-menu` | Emergency Flight Abort / Power Menu |
 | `SUPER + L` | `hyprlock` | DSKY PASSCODE Secure Lockscreen |
-| `SUPER + Return` | `kitty` | Space Mission Terminal |
-| `SUPER + Q` | `killactive` | Close Active Flight Window |
+| `SUPER + T` | `$terminal` | Launch Mission Terminal (Ghostty / Kitty) |
+| `SUPER + E` | `$fileManager` | Open Mission File Explorer |
+| `SUPER + F` | `fullscreen` | Toggle Fullscreen Window Mode |
+| `SUPER + V` | `togglefloating` | Toggle Floating Window Mode |
+| `SUPER + Q` | `killactive` | Close / Terminate Active Flight Window |
+| `SUPER + [1 - 9]` | `workspace [1-9]` | Direct Horizontal Slide Workspace Jump |
+| `Print` / `Ctrl+Print` | `space-capture` | Instant Area / Fullscreen Capture (Auto-Copy) |
 
 ---
 
@@ -67,7 +92,9 @@ The environment features four authentic retro flight-deck profiles switchable in
 
 ### Prerequisites (Arch Linux)
 ```bash
-sudo pacman -S hyprland waybar kitty dunst hyprlock hyprpaper fastfetch                python-gobject python-cairo gtk3 wayland-protocols base-devel
+sudo pacman -S hyprland waybar ghostty kitty dunst hyprlock hyprpaper fastfetch \
+               python-gobject python-cairo gtk3 wayland-protocols base-devel \
+               brightnessctl wireplumber playerctl
 ```
 
 ### Installation Options
