@@ -1,0 +1,68 @@
+import time
+import subprocess
+import os
+
+ASSETS = "/home/diogo/Space-Race-Theme/assets"
+os.makedirs(ASSETS, exist_ok=True)
+
+# 1. Apply theme
+subprocess.run(["/home/diogo/.local/bin/space-theme-switch", "nasa"], check=True)
+time.sleep(1.0)
+
+# 2. Switch to clean empty workspace 9
+subprocess.run(["hyprctl", "dispatch", "workspace", "9"], check=True)
+time.sleep(1.0)
+
+# 3. Capture clean desktop baseline
+print("Capturing 01_desktop_mocr.png...")
+subprocess.run(["grim", os.path.join(ASSETS, "01_desktop_mocr.png")], check=True)
+time.sleep(0.5)
+
+def capture_app(cmd_args, filename, delay=1.6):
+    print(f"Capturing: {cmd_args} -> {filename}")
+    proc = subprocess.Popen(cmd_args)
+    time.sleep(delay)
+    subprocess.run(["grim", os.path.join(ASSETS, filename)], check=True)
+    proc.terminate()
+    try:
+        proc.wait(timeout=1.2)
+    except Exception:
+        proc.kill()
+    time.sleep(0.6)
+
+# 02. Fastfetch in terminal
+capture_app(["ghostty", "-e", "bash", "-c", "fastfetch; read -n 1 -s -r -p ' '"], "02_fastfetch_terminal.png", 2.0)
+
+# 03. DSKY Launcher
+capture_app(["/home/diogo/.local/bin/dsky-launcher"], "03_dsky_launcher.png", 1.8)
+
+# 04. Theme Configurator
+capture_app(["/home/diogo/.local/bin/space-theme-config"], "04_theme_configurator.png", 1.8)
+
+# 05. Display Radar
+capture_app(["/home/diogo/.local/bin/space-display"], "05_display_radar.png", 1.8)
+
+# 06. Telemetry Console
+capture_app(["/home/diogo/.local/bin/space-telemetry-dialog"], "06_telemetry_console.png", 1.8)
+
+# 07. Network Comms
+capture_app(["/home/diogo/.local/bin/space-network-dialog"], "07_network_comms.png", 1.8)
+
+# 08. Space Tools Studio
+capture_app(["/home/diogo/.local/bin/space-tools-dialog"], "08_tools_studio.png", 1.8)
+
+# 09. ISS Orbital Tracker
+capture_app(["/home/diogo/.local/bin/space-iss-dialog"], "09_iss_orbital_tracker.png", 1.8)
+
+# 10. Power Abort Menu
+capture_app(["/home/diogo/.local/bin/space-power-menu"], "10_power_menu.png", 1.5)
+
+# 11. Keybinds Cheatsheet
+capture_app(["/home/diogo/.local/bin/space-keybinds"], "11_keybinds_cheatsheet.png", 1.5)
+
+# 12. CAPCOM Audio Intercom
+capture_app(["/home/diogo/.local/bin/space-capcom-dialog"], "12_capcom_audio.png", 1.8)
+
+# Return to workspace 1
+subprocess.run(["hyprctl", "dispatch", "workspace", "1"], check=True)
+print("ALL 12 CLEAN WORKSPACE SCREENSHOTS CAPTURED SUCCESSFULLY!")
