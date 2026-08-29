@@ -483,14 +483,16 @@ class SpaceSwitcherWindow(Gtk.Window):
         self.activate_and_close()
 
     def activate_and_close(self):
-        if 0 <= self.selected_idx < len(self.windows):
-            target = self.windows[self.selected_idx]
+        target = self.windows[self.selected_idx] if (0 <= self.selected_idx < len(self.windows)) else None
+        self.hide()
+        self.cleanup_and_quit()
+        if target:
             addr = target.get("address", "")
             if addr:
-                subprocess.Popen(["hyprctl", "dispatch", "focuswindow", f"address:{addr}"])
-        self.cleanup_and_quit()
+                subprocess.Popen(["hyprctl", "eval", f'hl.dsp.focus({{ window = "address:{addr}" }})'])
 
     def abort_and_close(self):
+        self.hide()
         self.cleanup_and_quit()
 
     def cleanup_and_quit(self):
@@ -608,7 +610,7 @@ def main():
     if len(windows) == 1:
         addr = windows[0].get("address")
         if addr:
-            subprocess.Popen(["hyprctl", "dispatch", "focuswindow", f"address:{addr}"])
+            subprocess.Popen(["hyprctl", "eval", f'hl.dsp.focus({{ window = "address:{addr}" }})'])
         sys.exit(0)
     
     # Start switcher UI
