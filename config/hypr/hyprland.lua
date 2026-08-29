@@ -327,6 +327,12 @@ hl.bind("CTRL + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-
 hl.bind("SHIFT + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-tools-dialog rec"))
 hl.bind(mainMod .. " + SHIFT + P", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-tools-dialog"))
 
+-- Apollo Alt+Tab / Super+Tab Mission Window Switcher
+hl.bind("ALT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher next"))
+hl.bind("ALT + SHIFT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher prev"))
+hl.bind(mainMod .. " + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher next"))
+hl.bind(mainMod .. " + SHIFT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher prev"))
+
 -- Move focus with mainMod + arrow keys
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
 hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
@@ -498,6 +504,15 @@ hl.window_rule({
 hl.window_rule({
     name  = "space-theme-config-float",
     match = { class = "space-theme-config" },
+    float = true,
+    center = true,
+    pin   = true,
+})
+
+-- Space Flight Attitude / Window Switcher
+hl.window_rule({
+    name  = "space-switcher-float",
+    match = { class = "space-switcher" },
     float = true,
     center = true,
     pin   = true,

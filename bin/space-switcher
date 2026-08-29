@@ -1,0 +1,610 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control / Space Race Alt+Tab Window Switcher
+Fast, aesthetic GTK3 Layer-Shell modal for cycling running windows in Hyprland.
+Zero-White-Background compliant, supports all 4 Space Mission Themes.
+"""
+
+import sys
+import os
+import json
+import socket
+import signal
+import threading
+import subprocess
+import configparser
+import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+try:
+    gi.require_version('GtkLayerShell', '0.1')
+    from gi.repository import GtkLayerShell
+    HAS_LAYER_SHELL = True
+except Exception:
+    HAS_LAYER_SHELL = False
+
+from gi.repository import Gtk, Gdk, GLib, Pango, GdkPixbuf
+
+UID = os.getuid()
+SOCKET_PATH = f"/tmp/space-switcher-{UID}.sock"
+CURRENT_THEME_FILE = os.path.expanduser("~/.config/themes/current_theme")
+
+THEMES = {
+    "nasa": {
+        "bg_chassis": "#10141a",
+        "bg_panel": "#14171d",
+        "bg_card": "#1c212a",
+        "bg_card_hover": "#252c38",
+        "bg_selected": "#283444",
+        "accent": "#ffb000",
+        "accent_dim": "#805800",
+        "green": "#2ef788",
+        "cyan": "#00d2ff",
+        "text_main": "#e2e8f0",
+        "text_dim": "#8892b0",
+        "border_color": "#2f3846",
+        "border_active": "#ffb000",
+        "radius": "4px",
+        "shadow": "0 0 24px rgba(0, 0, 0, 0.95)",
+    },
+    "crt-amber": {
+        "bg_chassis": "#060709",
+        "bg_panel": "#0e1014",
+        "bg_card": "#14120e",
+        "bg_card_hover": "#261908",
+        "bg_selected": "#3a260c",
+        "accent": "#ff9e00",
+        "accent_dim": "#7a4c00",
+        "green": "#ffb000",
+        "cyan": "#ffc247",
+        "text_main": "#ff9e00",
+        "text_dim": "#734900",
+        "border_color": "#402800",
+        "border_active": "#ff9e00",
+        "radius": "0px",
+        "shadow": "0 0 24px rgba(255, 158, 0, 0.4)",
+    },
+    "crt-green": {
+        "bg_chassis": "#040704",
+        "bg_panel": "#0a100a",
+        "bg_card": "#0c170c",
+        "bg_card_hover": "#102610",
+        "bg_selected": "#193d19",
+        "accent": "#33ff33",
+        "accent_dim": "#156615",
+        "green": "#33ff33",
+        "cyan": "#5cff5c",
+        "text_main": "#33ff33",
+        "text_dim": "#186618",
+        "border_color": "#0f3d0f",
+        "border_active": "#33ff33",
+        "radius": "0px",
+        "shadow": "0 0 24px rgba(51, 255, 51, 0.4)",
+    },
+    "kosmos-vfd": {
+        "bg_chassis": "#07100e",
+        "bg_panel": "#0e1e1a",
+        "bg_card": "#122622",
+        "bg_card_hover": "#173830",
+        "bg_selected": "#1e4d42",
+        "accent": "#48e5c2",
+        "accent_dim": "#1f6656",
+        "green": "#48e5c2",
+        "cyan": "#62f5d4",
+        "text_main": "#48e5c2",
+        "text_dim": "#226b5c",
+        "border_color": "#183d34",
+        "border_active": "#48e5c2",
+        "radius": "2px",
+        "shadow": "0 0 24px rgba(72, 229, 194, 0.4)",
+    },
+}
+
+def get_current_theme():
+    if os.path.isfile(CURRENT_THEME_FILE):
+        try:
+            with open(CURRENT_THEME_FILE, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+# Desktop icon cache for rapid lookup
+_DESKTOP_ICON_CACHE = None
+
+def load_desktop_icons():
+    global _DESKTOP_ICON_CACHE
+    if _DESKTOP_ICON_CACHE is not None:
+        return _DESKTOP_ICON_CACHE
+    
+    cache = {}
+    search_dirs = [
+        "/usr/share/applications",
+        os.path.expanduser("~/.local/share/applications"),
+        os.path.expanduser("~/Space-Race-Theme/applications")
+    ]
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for root, _, files in os.walk(d):
+            for file in files:
+                if not file.endswith(".desktop"):
+                    continue
+                path = os.path.join(root, file)
+                cp = configparser.RawConfigParser(strict=False)
+                try:
+                    cp.read(path, encoding="utf-8")
+                    if not cp.has_section("Desktop Entry"):
+                        continue
+                    icon = cp.get("Desktop Entry", "Icon", fallback=None)
+                    if not icon:
+                        continue
+                    base = file[:-8].lower()
+                    cache[base] = icon
+                    
+                    wmclass = cp.get("Desktop Entry", "StartupWMClass", fallback=None)
+                    if wmclass:
+                        cache[wmclass.lower()] = icon
+                    
+                    exec_cmd = cp.get("Desktop Entry", "Exec", fallback=None)
+                    if exec_cmd:
+                        clean = exec_cmd.split()[0].split("/")[-1].lower()
+                        cache[clean] = icon
+                except Exception:
+                    pass
+    _DESKTOP_ICON_CACHE = cache
+    return cache
+
+def get_running_windows():
+    try:
+        raw = subprocess.check_output(["hyprctl", "-j", "clients"], text=True)
+        clients = json.loads(raw)
+    except Exception:
+        return []
+    
+    # Filter valid windows
+    valid = []
+    for c in clients:
+        if not c.get("mapped", True):
+            continue
+        if c.get("hidden", False):
+            continue
+        title = c.get("title", "").strip()
+        win_cls = c.get("class", "").strip()
+        if not title and not win_cls:
+            continue
+        if win_cls in ["space-switcher", "dsky-launcher", "space-screensaver"]:
+            continue
+        valid.append(c)
+    
+    # Sort by focusHistoryID (0 = current window, 1 = previous window, etc.)
+    valid.sort(key=lambda x: x.get("focusHistoryID", 999))
+    return valid
+
+def resolve_icon_pixbuf(win_cls, initial_cls, icon_theme, icon_size=48):
+    icons_map = load_desktop_icons()
+    candidates = [
+        win_cls,
+        initial_cls,
+        win_cls.lower(),
+        initial_cls.lower(),
+        icons_map.get(win_cls.lower()),
+        icons_map.get(initial_cls.lower()),
+    ]
+    
+    # Common mappings
+    if "ghostty" in win_cls.lower():
+        candidates.extend(["com.mitchellh.ghostty", "utilities-terminal", "terminal"])
+    elif "kitty" in win_cls.lower():
+        candidates.extend(["kitty", "utilities-terminal", "terminal"])
+    elif "firefox" in win_cls.lower():
+        candidates.extend(["firefox", "web-browser"])
+    elif "code" in win_cls.lower():
+        candidates.extend(["code-oss", "visual-studio-code", "text-editor"])
+    elif "obsidian" in win_cls.lower():
+        candidates.extend(["obsidian", "text-editor"])
+    elif "space-" in win_cls.lower() or "dsky" in win_cls.lower():
+        candidates.extend(["preferences-system", "utilities-system-monitor", "video-display"])
+    
+    for c in candidates:
+        if not c:
+            continue
+        if os.path.isabs(c) and os.path.isfile(c):
+            try:
+                return GdkPixbuf.Pixbuf.new_from_file_at_scale(c, icon_size, icon_size, True)
+            except Exception:
+                pass
+        try:
+            info = icon_theme.lookup_icon(c, icon_size, Gtk.IconLookupFlags.GENERIC_FALLBACK)
+            if info:
+                return info.load_icon()
+        except Exception:
+            pass
+            
+    # Fallback default icon
+    try:
+        info = icon_theme.lookup_icon("application-x-executable", icon_size, Gtk.IconLookupFlags.GENERIC_FALLBACK)
+        if info:
+            return info.load_icon()
+    except Exception:
+        pass
+    return None
+
+class SpaceSwitcherWindow(Gtk.Window):
+    def __init__(self, windows, initial_index=1):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.windows = windows
+        self.count = len(windows)
+        self.selected_idx = initial_index % self.count if self.count > 0 else 0
+        
+        self.theme_name = get_current_theme()
+        self.pal = THEMES[self.theme_name]
+        self.icon_theme = Gtk.IconTheme.get_default()
+        
+        self.set_title("Apollo Flight Attitude Switcher")
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_app_paintable(True)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        
+        if HAS_LAYER_SHELL:
+            GtkLayerShell.init_for_window(self)
+            GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+            GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+            GtkLayerShell.set_namespace(self, "space-switcher")
+        
+        self.apply_css()
+        self.build_ui()
+        
+        self.connect("key-press-event", self.on_key_press)
+        self.connect("key-release-event", self.on_key_release)
+        self.connect("focus-out-event", lambda w, e: self.abort_and_close())
+        
+        # Start IPC Server Thread
+        self.server_running = True
+        self.server_thread = threading.Thread(target=self.run_ipc_server, daemon=True)
+        self.server_thread.start()
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrains Mono', 'IBM Plex Mono', 'Terminus', monospace;
+        }}
+        #switcher-window {{
+            background-color: transparent;
+        }}
+        .switcher-box {{
+            background-color: {self.pal['bg_panel']};
+            border: 2px solid {self.pal['border_active']};
+            border-radius: {self.pal['radius']};
+            padding: 14px 18px;
+            box-shadow: {self.pal['shadow']};
+        }}
+        .header-box {{
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid {self.pal['border_color']};
+        }}
+        .win-card {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['border_color']};
+            border-radius: {self.pal['radius']};
+            padding: 12px 14px;
+            min-width: 140px;
+            max-width: 180px;
+            min-height: 120px;
+            transition: all 0.12s ease;
+        }}
+        .win-card:hover {{
+            background-color: {self.pal['bg_card_hover']};
+            border-color: {self.pal['border_color']};
+        }}
+        .win-card.selected {{
+            background-color: {self.pal['bg_selected']};
+            border: 2px solid {self.pal['accent']};
+            box-shadow: 0 0 12px {self.pal['accent_dim']};
+        }}
+        .ws-badge {{
+            font-size: 8px;
+            font-weight: 800;
+            padding: 1px 4px;
+            border-radius: 1px;
+            border: 1px solid {self.pal['border_color']};
+            background-color: {self.pal['bg_chassis']};
+            color: {self.pal['cyan']};
+        }}
+        .ws-badge.selected {{
+            border-color: {self.pal['accent']};
+            color: {self.pal['accent']};
+        }}
+        .class-badge {{
+            font-size: 9px;
+            font-weight: 800;
+            color: {self.pal['text_dim']};
+        }}
+        .class-badge.selected {{
+            color: {self.pal['accent']};
+            font-weight: 900;
+        }}
+        .footer-lbl {{
+            font-size: 8.5px;
+            font-weight: 700;
+            color: {self.pal['text_dim']};
+            margin-top: 10px;
+            padding-top: 6px;
+            border-top: 1px solid {self.pal['border_color']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        self.set_name("switcher-window")
+        
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_vbox.get_style_context().add_class("switcher-box")
+        self.add(main_vbox)
+        
+        # 1. Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.get_style_context().add_class("header-box")
+        
+        lbl_head = Gtk.Label()
+        lbl_head.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['accent']}'>🛸 APOLLO FLIGHT ATTITUDE // WINDOW SWITCHER</span>")
+        lbl_head.set_xalign(0.0)
+        header.pack_start(lbl_head, True, True, 0)
+        
+        self.lbl_counter = Gtk.Label()
+        self.lbl_counter.set_xalign(1.0)
+        header.pack_end(self.lbl_counter, False, False, 0)
+        main_vbox.pack_start(header, False, False, 0)
+        
+        # 2. Windows Flow / Grid
+        self.cards_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.cards_container.set_halign(Gtk.Align.CENTER)
+        main_vbox.pack_start(self.cards_container, True, True, 0)
+        
+        self.card_widgets = []
+        for idx, win in enumerate(self.windows):
+            card_eb = Gtk.EventBox()
+            card_eb.get_style_context().add_class("win-card")
+            
+            card_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            card_eb.add(card_vbox)
+            
+            # Top row: App Class & Workspace badge
+            top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            
+            cls_name = win.get("class", "APP")[:12].upper()
+            lbl_cls = Gtk.Label(label=cls_name)
+            lbl_cls.get_style_context().add_class("class-badge")
+            lbl_cls.set_xalign(0.0)
+            top_row.pack_start(lbl_cls, True, True, 0)
+            
+            ws_num = str(win.get("workspace", {}).get("id", "1"))
+            lbl_ws = Gtk.Label(label=f"WS{ws_num}")
+            lbl_ws.get_style_context().add_class("ws-badge")
+            top_row.pack_end(lbl_ws, False, False, 0)
+            card_vbox.pack_start(top_row, False, False, 0)
+            
+            # Middle: High-Res Icon
+            pix = resolve_icon_pixbuf(win.get("class", ""), win.get("initialClass", ""), self.icon_theme, 44)
+            if pix:
+                img = Gtk.Image.new_from_pixbuf(pix)
+            else:
+                img = Gtk.Image.new_from_icon_name("application-x-executable", Gtk.IconSize.DND)
+            img.set_halign(Gtk.Align.CENTER)
+            card_vbox.pack_start(img, True, True, 4)
+            
+            # Bottom: Window Title
+            title_txt = win.get("title", "")
+            if len(title_txt) > 20:
+                title_txt = title_txt[:18] + "…"
+            lbl_title = Gtk.Label(label=title_txt)
+            lbl_title.set_xalign(0.5)
+            lbl_title.set_ellipsize(Pango.EllipsizeMode.END)
+            card_vbox.pack_start(lbl_title, False, False, 0)
+            
+            # Click to select & activate
+            card_eb.connect("button-press-event", lambda w, e, i=idx: self.select_and_activate(i))
+            
+            self.cards_container.pack_start(card_eb, False, False, 0)
+            self.card_widgets.append({
+                "eb": card_eb,
+                "lbl_cls": lbl_cls,
+                "lbl_ws": lbl_ws,
+                "lbl_title": lbl_title,
+                "win": win
+            })
+            
+        # 3. Active Window Full Detail Banner
+        self.detail_banner = Gtk.Label()
+        self.detail_banner.set_xalign(0.5)
+        self.detail_banner.set_margin_top(8)
+        main_vbox.pack_start(self.detail_banner, False, False, 0)
+        
+        # 4. Footer Hint
+        lbl_hint = Gtk.Label()
+        lbl_hint.get_style_context().add_class("footer-lbl")
+        lbl_hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / → ] NEXT  |  [ SHIFT+TAB / ← ] PREV  |  [ RELEASE ALT / ENTER ] ACTIVATE  |  [ ESC ] ABORT</span>")
+        lbl_hint.set_xalign(0.5)
+        main_vbox.pack_start(lbl_hint, False, False, 0)
+        
+        self.update_selection_ui()
+
+    def update_selection_ui(self):
+        if not self.card_widgets:
+            return
+        
+        self.selected_idx = self.selected_idx % len(self.card_widgets)
+        self.lbl_counter.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['cyan']}'>[ {self.selected_idx + 1:02d} / {len(self.card_widgets):02d} ]</span>")
+        
+        for idx, item in enumerate(self.card_widgets):
+            is_sel = (idx == self.selected_idx)
+            if is_sel:
+                item["eb"].get_style_context().add_class("selected")
+                item["lbl_cls"].get_style_context().add_class("selected")
+                item["lbl_ws"].get_style_context().add_class("selected")
+                
+                win = item["win"]
+                full_title = GLib.markup_escape_text(win.get("title", ""))
+                cls_name = GLib.markup_escape_text(win.get("class", ""))
+                ws_id = win.get("workspace", {}).get("id", "1")
+                self.detail_banner.set_markup(
+                    f"<span font_weight='bold' font_size='9000' foreground='{self.pal['accent']}'>▶ {cls_name}</span> "
+                    f"<span font_size='8500' foreground='{self.pal['text_main']}'>{full_title}</span> "
+                    f"<span font_size='8000' foreground='{self.pal['cyan']}'>[WS {ws_id}]</span>"
+                )
+            else:
+                item["eb"].get_style_context().remove_class("selected")
+                item["lbl_cls"].get_style_context().remove_class("selected")
+                item["lbl_ws"].get_style_context().remove_class("selected")
+
+    def cycle_next(self):
+        if self.count > 0:
+            self.selected_idx = (self.selected_idx + 1) % self.count
+            self.update_selection_ui()
+
+    def cycle_prev(self):
+        if self.count > 0:
+            self.selected_idx = (self.selected_idx - 1 + self.count) % self.count
+            self.update_selection_ui()
+
+    def select_and_activate(self, idx):
+        self.selected_idx = idx
+        self.activate_and_close()
+
+    def activate_and_close(self):
+        if 0 <= self.selected_idx < len(self.windows):
+            target = self.windows[self.selected_idx]
+            addr = target.get("address", "")
+            if addr:
+                subprocess.Popen(["hyprctl", "dispatch", "focuswindow", f"address:{addr}"])
+        self.cleanup_and_quit()
+
+    def abort_and_close(self):
+        self.cleanup_and_quit()
+
+    def cleanup_and_quit(self):
+        self.server_running = False
+        try:
+            if os.path.exists(SOCKET_PATH):
+                os.remove(SOCKET_PATH)
+        except Exception:
+            pass
+        Gtk.main_quit()
+
+    def on_key_press(self, widget, event):
+        keyval = event.keyval
+        keyname = Gdk.keyval_name(keyval)
+        state = event.state
+        
+        if keyname in ["Escape", "q", "Q"]:
+            self.abort_and_close()
+            return True
+            
+        if keyname in ["Return", "KP_Enter", "space"]:
+            self.activate_and_close()
+            return True
+            
+        if keyname in ["Tab", "ISO_Left_Tab", "Right", "Down", "l", "j"]:
+            if (state & Gdk.ModifierType.SHIFT_MASK) or keyname == "ISO_Left_Tab":
+                self.cycle_prev()
+            else:
+                self.cycle_next()
+            return True
+            
+        if keyname in ["Left", "Up", "h", "k"]:
+            self.cycle_prev()
+            return True
+            
+        return False
+
+    def on_key_release(self, widget, event):
+        keyval = event.keyval
+        keyname = Gdk.keyval_name(keyval)
+        
+        # When Alt key (or Super key) is released, activate selected window
+        if keyname in ["Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R"]:
+            self.activate_and_close()
+            return True
+        return False
+
+    def run_ipc_server(self):
+        try:
+            if os.path.exists(SOCKET_PATH):
+                os.remove(SOCKET_PATH)
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(SOCKET_PATH)
+            server.listen(5)
+            server.settimeout(0.5)
+            
+            while self.server_running:
+                try:
+                    conn, _ = server.accept()
+                    data = conn.recv(128).decode("utf-8", errors="ignore").strip()
+                    conn.close()
+                    if data == "next":
+                        GLib.idle_add(self.cycle_next)
+                    elif data == "prev":
+                        GLib.idle_add(self.cycle_prev)
+                    elif data == "release":
+                        GLib.idle_add(self.activate_and_close)
+                    elif data == "close":
+                        GLib.idle_add(self.abort_and_close)
+                except socket.timeout:
+                    continue
+                except Exception:
+                    break
+        except Exception:
+            pass
+
+def send_ipc_command(cmd):
+    if not os.path.exists(SOCKET_PATH):
+        return False
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(SOCKET_PATH)
+        client.sendall(cmd.encode("utf-8"))
+        client.close()
+        return True
+    except Exception:
+        try:
+            os.remove(SOCKET_PATH)
+        except OSError:
+            pass
+        return False
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "next"
+    
+    # If already running, forward action to existing instance
+    if send_ipc_command(cmd):
+        sys.exit(0)
+    
+    # Get live window hierarchy
+    windows = get_running_windows()
+    if not windows:
+        sys.exit(0)
+    
+    # If only 1 window, switch focus immediately if needed
+    if len(windows) == 1:
+        addr = windows[0].get("address")
+        if addr:
+            subprocess.Popen(["hyprctl", "dispatch", "focuswindow", f"address:{addr}"])
+        sys.exit(0)
+    
+    # Start switcher UI
+    init_idx = 1 if cmd != "prev" else (len(windows) - 1)
+    win = SpaceSwitcherWindow(windows, initial_index=init_idx)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

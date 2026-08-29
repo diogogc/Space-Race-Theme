@@ -77,9 +77,15 @@ BINARIES=(
     "space-sddm-install"
     "space-telemetry"
     "space-telemetry-dialog"
+    "space-capture"
+    "space-display"
+    "space-switcher"
+    "space-theme-config"
     "space-theme-status"
     "space-theme-switch"
+    "space-tools-dialog"
     "space-vox-dialog"
+    "space-wallpaper"
 )
 
 for b in "${BINARIES[@]}"; do
@@ -94,6 +100,7 @@ echo "==> Removing desktop launchers from ~/.local/share/applications..."
 DESKTOPS=(
     "space-capcom.desktop"
     "space-default-apps.desktop"
+    "space-display.desktop"
     "space-energy.desktop"
     "space-flight-poll.desktop"
     "space-flight-reboot.desktop"
@@ -105,7 +112,9 @@ DESKTOPS=(
     "space-screensaver-config.desktop"
     "space-screensaver.desktop"
     "space-telemetry.desktop"
+    "space-theme-config.desktop"
     "space-theme-switch.desktop"
+    "space-tools-dialog.desktop"
 )
 
 for d in "${DESKTOPS[@]}"; do
