@@ -12,19 +12,30 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="install"
+ENABLE_RECOVERY=false
 
-if [[ "$1" == "--link" || "$1" == "-l" ]]; then
-    MODE="link"
-elif [[ "$1" == "--build" || "$1" == "-b" ]]; then
-    MODE="build"
-elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Space Race Theme Installer"
-    echo "Usage: ./install.sh [options]"
-    echo "  --install, -i  (default) Copy files to ~/.local/bin, ~/.config, etc."
-    echo "  --link, -l     Symlink files to this repository for live development"
-    echo "  --build, -b    Only compile C daemons"
-    exit 0
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --link|-l)
+            MODE="link"
+            ;;
+        --build|-b)
+            MODE="build"
+            ;;
+        --recovery|-r)
+            ENABLE_RECOVERY=true
+            ;;
+        --help|-h)
+            echo "Space Race Theme Installer"
+            echo "Usage: ./install.sh [options]"
+            echo "  --install, -i   (default) Copy files to ~/.local/bin, ~/.config, etc."
+            echo "  --link, -l      Symlink files to this repository for live development"
+            echo "  --build, -b     Only compile C daemons"
+            echo "  --recovery, -r  Opt-in: Configure autonomous AI boot fallback & recovery engine"
+            exit 0
+            ;;
+    esac
+done
 
 echo "=================================================================="
 echo " 🚀 SPACE RACE THEME // MISSION CONTROL INSTALLER"
@@ -100,6 +111,10 @@ if [[ "$MODE" == "link" ]]; then
         bname=$(basename "$f")
         ln -sf "$f" "$HOME/Pictures/Wallpapers/historical/$bname"
     done
+
+    echo "==> Linking systemd recovery services..."
+    mkdir -p "$HOME/.config/systemd/user"
+    ln -sf "$SCRIPT_DIR/config/systemd/kernel-fallback-collector.service" "$HOME/.config/systemd/user/kernel-fallback-collector.service"
 else
     echo "==> Installing binaries to ~/.local/bin..."
     cp -r "$SCRIPT_DIR/bin/"* "$HOME/.local/bin/"
@@ -125,9 +140,21 @@ else
     cp "$SCRIPT_DIR/config/zsh/.zprofile" "$HOME/.zprofile"
     cp "$SCRIPT_DIR/config/themes/nasa/starship.toml" "$HOME/.config/starship.toml"
 
+    echo "==> Installing systemd recovery services..."
+    mkdir -p "$HOME/.config/systemd/user"
+    cp -r "$SCRIPT_DIR/config/systemd/"* "$HOME/.config/systemd/user/" 2>/dev/null || true
+
     echo "==> Installing wallpapers..."
     cp "$SCRIPT_DIR/wallpapers/"*.* "$HOME/Pictures/Wallpapers/" 2>/dev/null || true
     cp -r "$SCRIPT_DIR/wallpapers/historical/"* "$HOME/Pictures/Wallpapers/historical/" 2>/dev/null || true
+fi
+
+# Opt-in Autonomous AI Recovery setup
+if [[ "$ENABLE_RECOVERY" == true ]]; then
+    echo "==> Configuring Autonomous AI Boot Recovery..."
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable kernel-fallback-collector.service 2>/dev/null || true
+    "$HOME/.local/bin/space-ai-recovery" --config || true
 fi
 
 # Update desktop database
@@ -180,6 +207,8 @@ echo -e "  ${CYAN}${BOLD}● QUICK TERMINAL COMMANDS${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}theme [name]            ${RESET}${MUTED}⫸${RESET} ${WHITE}Switch theme (nasa, crt-amber, crt-green, kosmos-vfd)${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}cheatsheet (or keys)    ${RESET}${MUTED}⫸${RESET} ${WHITE}Display full interactive CLI cheatsheet${RESET}"
 echo -e "    ${BRIGHT_AMBER}${BOLD}fetch                   ${RESET}${MUTED}⫸${RESET} ${WHITE}Display Fastfetch avionics telemetry banner${RESET}"
+echo -e "    ${BRIGHT_AMBER}${BOLD}space-ai-recovery       ${RESET}${MUTED}⫸${RESET} ${WHITE}AI Boot Failure Diagnostic & Recovery Dispatcher${RESET}"
+echo -e "    ${BRIGHT_AMBER}${BOLD}agy-kernel-repair       ${RESET}${MUTED}⫸${RESET} ${WHITE}Autonomous Kernel Health & Integrity Repair${RESET}"
 echo -e " ${MUTED}──────────────────────────────────────────────────────────────────────────────${RESET}"
 echo -e "  ${GREEN}💡 TIP:${RESET} ${WHITE}Press ${BRIGHT_AMBER}${BOLD}SUPER + SHIFT + K${RESET}${WHITE} anytime to open the graphical Keybinding Guide.${RESET}"
 echo -e "${AMBER}${BOLD}==============================================================================${RESET}\n"

@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# 🚀 Apollo Mission Control: AI Boot Diagnostics & Recovery Dispatcher
+# ==============================================================================
+# Usage:
+#   space-ai-recovery          -> Launch configured AI Engine with crash telemetry
+#   space-ai-recovery --check  -> Check if active boot failure warning exists
+#   space-ai-recovery --clean  -> Clear warning flag in sys-mem and purge dump log
+#   space-ai-recovery --config -> Interactively configure AI Engine & fallback options
+# ==============================================================================
+
+set -euo pipefail
+
+CONFIG_FILE="${HOME}/.config/space-theme/recovery.conf"
+LOG_DUMP="${HOME}/.cache/kernel-boot-failure-last.log"
+VAULT_ALERT="${HOME}/sys-mem/sys_mem/troubleshooting/active-kernel-failure-alert.md"
+
+# Load configuration with fallback defaults
+AI_ENGINE="agy"
+CUSTOM_AI_CMD=""
+AUTO_CLEAN_ON_SUCCESS=false
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+fi
+
+check_status() {
+    local has_alert=false
+    local has_dump=false
+
+    if [[ -f "$VAULT_ALERT" ]] && grep -q "status: active-warning" "$VAULT_ALERT" 2>/dev/null; then
+        has_alert=true
+    fi
+
+    if [[ -f "$LOG_DUMP" ]]; then
+        has_dump=true
+    fi
+
+    if [[ "$has_alert" == true ]] || [[ "$has_dump" == true ]]; then
+        echo "⚠️ [ALERT ACTIVE] Kernel / Boot failure registered."
+        [[ -f "$VAULT_ALERT" ]] && echo "  - Vault Alert: $VAULT_ALERT"
+        [[ -f "$LOG_DUMP" ]] && echo "  - Dump Log:    $LOG_DUMP ($(wc -l < "$LOG_DUMP") lines)"
+        echo "  - AI Engine:   ${AI_ENGINE}"
+        return 0
+    else
+        echo "✅ [CLEAN] No active kernel failure alerts or dump files found."
+        return 1
+    fi
+}
+
+clean_alert() {
+    echo "🧹 Purging kernel recovery flags and log dumps..."
+    local cleaned=0
+
+    if [[ -f "$LOG_DUMP" ]]; then
+        rm -f "$LOG_DUMP"
+        echo "  ✔ Removed telemetry log dump: $LOG_DUMP"
+        cleaned=1
+    fi
+
+    if [[ -f "$VAULT_ALERT" ]]; then
+        sed -i 's/status: active-warning/status: resolved/' "$VAULT_ALERT"
+        sed -i '/- active-warning/d' "$VAULT_ALERT"
+        sed -i '/- unanalyzed/d' "$VAULT_ALERT"
+        echo -e "\n## ✅ Resolution Summary\n- **Resolved At**: $(date -Iseconds)\n- **Engine Used**: \`${AI_ENGINE}\`\n- **Status**: Cleared by \`space-ai-recovery --clean\`\n" >> "$VAULT_ALERT"
+        echo "  ✔ Marked sys-mem warning note as resolved: $VAULT_ALERT"
+        cleaned=1
+    fi
+
+    if [[ $cleaned -eq 1 ]]; then
+        echo "✨ System state clean. Recovery harness reset."
+    else
+        echo "Nothing to clean. All flags already clear."
+    fi
+}
+
+configure_engine() {
+    echo "=================================================================="
+    echo " 🛸 APOLLO AI RECOVERY ENGINE CONFIGURATION"
+    echo "=================================================================="
+    echo "Select the AI engine or harness to handle boot failure diagnosis:"
+    echo "  1) Google Antigravity CLI (agy) [Default & Recommended]"
+    echo "  2) Claude Code CLI (claude)"
+    echo "  3) Aider AI Pair Programmer (aider)"
+    echo "  4) Ollama Local LLM (offline model)"
+    echo "  5) Custom CLI / Script"
+    echo "=================================================================="
+    
+    read -rp "Enter choice [1-5, default: 1]: " choice
+    case "${choice:-1}" in
+        1)
+            AI_ENGINE="agy"
+            ;;
+        2)
+            AI_ENGINE="claude"
+            ;;
+        3)
+            AI_ENGINE="aider"
+            ;;
+        4)
+            AI_ENGINE="ollama"
+            read -rp "Enter Ollama model name [e.g., qwen2.5-coder:7b, deepseek-r1:8b]: " ollama_model
+            OLLAMA_MODEL="${ollama_model:-qwen2.5-coder:7b}"
+            ;;
+        5)
+            AI_ENGINE="custom"
+            read -rp "Enter custom command or executable path: " CUSTOM_AI_CMD
+            ;;
+        *)
+            echo "Invalid choice. Defaulting to agy."
+            AI_ENGINE="agy"
+            ;;
+    esac
+
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    cat <<EOF > "$CONFIG_FILE"
+# Apollo Mission Control - AI Recovery Configuration
+AI_ENGINE="${AI_ENGINE}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
+CUSTOM_AI_CMD="${CUSTOM_AI_CMD:-}"
+AUTO_CLEAN_ON_SUCCESS=false
+EOF
+    echo "✅ Configuration saved to: $CONFIG_FILE"
+}
+
+launch_recovery() {
+    if ! check_status >/dev/null 2>&1; then
+        echo "✅ No active kernel boot failure warnings found."
+        echo "If you wish to force an AI session, launch '${AI_ENGINE}' directly."
+        exit 0
+    fi
+
+    echo "🚀 Initiating Autonomous Recovery via [${AI_ENGINE}] using dump: ${LOG_DUMP}..."
+    
+    local PROMPT="KERNEL RECOVERY MODE: The system previously fell back to the LTS kernel or snapshot due to a boot failure. The failure telemetry has been cached to '${LOG_DUMP}' and registered in sys-mem ('${VAULT_ALERT}'). Please read the cached log dump directly, diagnose the root cause (using Arch Linux sysadmin expertise), and guide/perform the necessary fix. After successful repair and verification, run 'space-ai-recovery --clean' to clear the warning flag and delete the failure dump."
+
+    case "$AI_ENGINE" in
+        agy)
+            if command -v agy >/dev/null 2>&1; then
+                exec agy --prompt "$PROMPT"
+            else
+                echo "Error: 'agy' command not found in PATH." >&2
+                exit 1
+            fi
+            ;;
+        claude)
+            if command -v claude >/dev/null 2>&1; then
+                exec claude "$PROMPT"
+            else
+                echo "Error: 'claude' command not found in PATH." >&2
+                exit 1
+            fi
+            ;;
+        aider)
+            if command -v aider >/dev/null 2>&1; then
+                exec aider --message "$PROMPT"
+            else
+                echo "Error: 'aider' command not found in PATH." >&2
+                exit 1
+            fi
+            ;;
+        ollama)
+            if command -v ollama >/dev/null 2>&1; then
+                echo "--- Telemetry Dump Content ---"
+                cat "$LOG_DUMP"
+                echo "--- Running Local Ollama Diagnosis ---"
+                exec ollama run "${OLLAMA_MODEL:-qwen2.5-coder:7b}" "$PROMPT"
+            else
+                echo "Error: 'ollama' command not found in PATH." >&2
+                exit 1
+            fi
+            ;;
+        custom)
+            if [[ -n "$CUSTOM_AI_CMD" ]]; then
+                exec $CUSTOM_AI_CMD "$PROMPT" "$LOG_DUMP"
+            else
+                echo "Error: Custom AI command not configured in $CONFIG_FILE." >&2
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Unknown AI engine: $AI_ENGINE. Defaulting to agy."
+            exec agy --prompt "$PROMPT"
+            ;;
+    esac
+}
+
+case "${1:-}" in
+    --check|-c)
+        check_status || exit 0
+        ;;
+    --clean|-r)
+        clean_alert
+        ;;
+    --config)
+        configure_engine
+        ;;
+    --help|-h)
+        echo "Usage: space-ai-recovery [--check | --clean | --config | --help]"
+        echo "  (no arguments) Launch configured AI engine loaded with crash dump"
+        echo "  --check        Check if active boot failure alert/dump exists"
+        echo "  --clean        Clear sys-mem warning flag and delete dump log"
+        echo "  --config       Interactively select preferred AI service (agy, claude, aider, ollama, custom)"
+        ;;
+    *)
+        launch_recovery
+        ;;
+esac

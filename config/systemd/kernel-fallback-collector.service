@@ -1,0 +1,12 @@
+[Unit]
+Description=Apollo Kernel Fallback Telemetry Collector
+Documentation=file:///home/diogo/sys-mem/sys_mem/runbooks/automated-kernel-fallback-and-ai-diagnostics.md
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/kernel-fallback-collector.sh
+RemainAfterExit=no
+
+[Install]
+WantedBy=default.target

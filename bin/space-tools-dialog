@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Apollo Mission Control Capture & Mission Tools Dialog
-Provides interactive GUI panel for Area/Fullscreen Screenshots,
-Screen Video Recording with audio & keystroke toggles,
-and quick media storage access.
-Strictly dark chassis & zero-white-background theme adherence.
+Apollo Mission Control Operations & Tools Dialog
+Provides interactive tabbed GUI panel for:
+  1) AV & Mission Capture (Screenshots, Screen Video Recording, Audio/Keystroke toggles, Media Access)
+  2) System Tools & Recovery (Btrfs Snapshots, Multi-Engine AI Recovery, Integrity Checks, Maintenance)
+Strict dark chassis & zero-white-background theme adherence across all 4 mission profiles.
 """
 import sys
 import os
@@ -12,15 +12,20 @@ import subprocess
 import signal
 import time
 import json
+import shutil
 from pathlib import Path
+
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Pango
 
 PID_FILE = f"/tmp/space-tools-dialog-{os.getuid()}.pid"
 REC_PID_FILE = Path("/tmp/space-recording.pid")
 REC_INFO_FILE = Path("/tmp/space-recording.info")
+CONFIG_FILE = Path(os.path.expanduser("~/.config/space-theme/recovery.conf"))
+LOG_DUMP = Path(os.path.expanduser("~/.cache/kernel-boot-failure-last.log"))
+VAULT_ALERT = Path(os.path.expanduser("~/sys-mem/sys_mem/troubleshooting/active-kernel-failure-alert.md"))
 
 THEMES = {
     "nasa": {
@@ -111,39 +116,85 @@ def is_recording_active():
             pass
     return False
 
+def get_ai_engine():
+    if CONFIG_FILE.exists():
+        try:
+            for line in CONFIG_FILE.read_text().splitlines():
+                if line.startswith("AI_ENGINE="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val
+        except Exception:
+            pass
+    return "agy"
+
+def is_recovery_alert_active():
+    if VAULT_ALERT.exists():
+        try:
+            if "status: active-warning" in VAULT_ALERT.read_text():
+                return True
+        except Exception:
+            pass
+    if LOG_DUMP.exists():
+        return True
+    return False
+
+def launch_in_terminal(cmd_str, title="Apollo Operations Console"):
+    term = "ghostty" if shutil.which("ghostty") else "kitty"
+    if term == "ghostty":
+        subprocess.Popen([
+            "ghostty",
+            f"--title={title}",
+            "-e", "bash", "-c", f"{cmd_str}; echo; echo '[Operation Completed] Press any key to close...'; read -n 1 -s -r"
+        ], start_new_session=True)
+    else:
+        subprocess.Popen([
+            "kitty",
+            "--title", title,
+            "bash", "-c", f"{cmd_str}; echo; echo '[Operation Completed] Press any key to close...'; read -n 1 -s -r"
+        ], start_new_session=True)
+
 class SpaceToolsDialog(Gtk.Window):
-    def __init__(self, initial_view="main"):
-        super().__init__(title="Apollo Mission Control Capture & Tools")
+    def __init__(self, initial_tab="capture", initial_view="main"):
+        super().__init__(title="Apollo Mission Control // Operations & Tools")
         self.set_wmclass("space-tools-dialog", "space-tools-dialog")
         self.set_role("dialog")
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_default_size(560, 500)
+        self.set_default_size(620, 560)
 
         self.theme_name = get_theme_name()
         self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
 
-        # State
-        self.current_view = initial_view
-        self.selected_idx = 0
-        self.main_buttons = []
-        self.rec_buttons = []
+        # Navigation State
+        self.active_tab = initial_tab  # "capture" or "system"
+        self.current_view = initial_view  # "main", "rec"
+        self.capture_selected_idx = 0
+        self.rec_selected_idx = 0
+        self.system_selected_idx = 0
 
         # Recording configuration toggles
         self.rec_mode = "area"      # "area" or "full"
         self.rec_sys_audio = True   # Desktop sounds default ON
         self.rec_mic_audio = False  # Mic default OFF
-        self.rec_keystrokes = False # Keystrokes strictly default OFF (opt-in per session)
+        self.rec_keystrokes = False # Keystrokes default OFF (security opt-in)
+
+        # Widget registries
+        self.capture_buttons = []
+        self.rec_ctrl_items = []
+        self.system_buttons = []
 
         self.apply_css()
         self.build_ui()
         self.connect("key-press-event", self.on_key_press)
 
-        if initial_view == "rec":
+        if initial_tab == "system":
+            self.switch_tab("system")
+        elif initial_view == "rec":
             self.switch_to_rec_view()
         else:
-            self.switch_to_main_view()
+            self.switch_tab("capture")
 
     def apply_css(self):
         css = f"""
@@ -158,13 +209,38 @@ class SpaceToolsDialog(Gtk.Window):
         .header-box {{
             background-color: {self.pal['bg_card']};
             border-bottom: 2px solid {self.pal['border']};
-            padding: 12px 18px;
+            padding: 10px 16px;
+        }}
+        .tab-bar {{
+            background-color: {self.pal['bg']};
+            border-bottom: 1px solid {self.pal['btn_border']};
+            padding: 4px 16px 0 16px;
+        }}
+        .nav-tab {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-bottom: none;
+            border-radius: {self.pal['radius']} {self.pal['radius']} 0 0;
+            padding: 8px 16px;
+            transition: all 0.15s ease;
+        }}
+        .nav-tab.active {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['accent']};
+            border-bottom: 2px solid {self.pal['bg_card']};
+        }}
+        .card-panel {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+            margin-bottom: 8px;
         }}
         .tool-row {{
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 10px 14px;
+            padding: 8px 12px;
             transition: all 0.15s ease;
         }}
         .tool-row.selected {{
@@ -178,17 +254,11 @@ class SpaceToolsDialog(Gtk.Window):
             background-color: #381414;
             border: 1.5px solid {self.pal['red']};
         }}
-        .config-card {{
-            background-color: {self.pal['bg_card']};
-            border: 1px solid {self.pal['btn_border']};
-            border-radius: {self.pal['radius']};
-            padding: 14px 16px;
-        }}
         .toggle-btn {{
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 8px 12px;
+            padding: 7px 10px;
             transition: all 0.15s ease;
         }}
         .toggle-btn.selected {{
@@ -199,7 +269,7 @@ class SpaceToolsDialog(Gtk.Window):
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 10px 16px;
+            padding: 8px 12px;
             transition: all 0.15s ease;
         }}
         .action-btn.selected {{
@@ -218,23 +288,15 @@ class SpaceToolsDialog(Gtk.Window):
         )
 
     def build_ui(self):
-        self.stack = Gtk.Stack()
-        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.stack.set_transition_duration(120)
-        self.add(self.stack)
+        root_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(root_vbox)
 
-        self.build_main_view()
-        self.build_rec_view()
-
-    def build_main_view(self):
-        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-
-        # Header
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        # 1. Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         header.get_style_context().add_class("header-box")
 
         title = Gtk.Label()
-        title.set_markup(f"<span font_weight='bold' font_size='11500' foreground='{self.pal['text_main']}'>🛠️ APOLLO MISSION CONTROL // CAPTURE &amp; TOOLS</span>")
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['text_main']}'>🛠️ APOLLO MISSION CONTROL // OPERATIONS &amp; TOOLS</span>")
         title.set_xalign(0.0)
         header.pack_start(title, False, False, 0)
 
@@ -243,16 +305,77 @@ class SpaceToolsDialog(Gtk.Window):
         sub.set_markup(f"<span font_size='8500' foreground='{self.pal['green']}'>[ STATUS: NOMINAL ]</span> <span font_size='8500' foreground='{self.pal['text_dim']}'>| UTC: {utc_str} | PROFILE: {self.theme_name.upper()}</span>")
         sub.set_xalign(0.0)
         header.pack_start(sub, False, False, 0)
-        main_vbox.pack_start(header, False, False, 0)
+        root_vbox.pack_start(header, False, False, 0)
 
-        # Main tools list
-        tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        tools_box.set_margin_top(14)
-        tools_box.set_margin_bottom(14)
-        tools_box.set_margin_left(18)
-        tools_box.set_margin_right(18)
+        # 2. Navigation Tab Bar
+        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        tab_bar.get_style_context().add_class("tab-bar")
 
-        self.tool_items = [
+        # Tab 1: Capture
+        self.tab_capture = Gtk.EventBox()
+        self.tab_capture.get_style_context().add_class("nav-tab")
+        self.lbl_tab_capture = Gtk.Label()
+        self.tab_capture.add(self.lbl_tab_capture)
+        self.tab_capture.connect("button-press-event", lambda w, e: self.switch_tab("capture"))
+        tab_bar.pack_start(self.tab_capture, False, False, 0)
+
+        # Tab 2: System Tools & Recovery
+        self.tab_system = Gtk.EventBox()
+        self.tab_system.get_style_context().add_class("nav-tab")
+        self.lbl_tab_system = Gtk.Label()
+        self.tab_system.add(self.lbl_tab_system)
+        self.tab_system.connect("button-press-event", lambda w, e: self.switch_tab("system"))
+        tab_bar.pack_start(self.tab_system, False, False, 0)
+
+        root_vbox.pack_start(tab_bar, False, False, 0)
+
+        # 3. Main Stack Container
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(120)
+        root_vbox.pack_start(self.stack, True, True, 0)
+
+        # Build Tab Pages
+        self.build_capture_tab()
+        self.build_rec_view()
+        self.build_system_tab()
+
+        # 4. Footer Hint
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer.set_margin_top(4)
+        footer.set_margin_bottom(8)
+        footer.set_margin_left(16)
+        footer.set_margin_right(16)
+
+        self.lbl_footer = Gtk.Label()
+        self.lbl_footer.set_xalign(0.5)
+        footer.pack_start(self.lbl_footer, True, True, 0)
+        root_vbox.pack_start(footer, False, False, 0)
+
+        self.update_tab_headers()
+
+    def update_tab_headers(self):
+        if self.active_tab == "capture":
+            self.tab_capture.get_style_context().add_class("active")
+            self.tab_system.get_style_context().remove_class("active")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📸 [C] AV &amp; CAPTURE</span>")
+            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] SYSTEM &amp; RECOVERY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+        else:
+            self.tab_capture.get_style_context().remove_class("active")
+            self.tab_system.get_style_context().add_class("active")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] AV &amp; CAPTURE</span>")
+            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛡️ [S] SYSTEM &amp; RECOVERY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+
+    def build_capture_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        vbox.set_margin_top(12)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        self.capture_tool_items = [
             {
                 "key": "1",
                 "title": "📸 AREA SCREENSHOT",
@@ -285,8 +408,8 @@ class SpaceToolsDialog(Gtk.Window):
             }
         ]
 
-        self.main_buttons = []
-        for i, item in enumerate(self.tool_items):
+        self.capture_buttons = []
+        for i, item in enumerate(self.capture_tool_items):
             btn = Gtk.EventBox()
             btn.get_style_context().add_class("tool-row")
 
@@ -301,7 +424,7 @@ class SpaceToolsDialog(Gtk.Window):
             row_box.pack_start(text_vbox, True, True, 0)
 
             t_lbl = Gtk.Label()
-            t_lbl.set_markup(f"<span font_weight='bold' font_size='10000' foreground='{self.pal['text_main']}'>{item['title']}</span>")
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{item['title']}</span>")
             t_lbl.set_xalign(0.0)
             text_vbox.pack_start(t_lbl, False, False, 0)
 
@@ -310,35 +433,21 @@ class SpaceToolsDialog(Gtk.Window):
             s_lbl.set_xalign(0.0)
             text_vbox.pack_start(s_lbl, False, False, 0)
 
-            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_main_action(idx))
-            self.main_buttons.append(btn)
-            tools_box.pack_start(btn, False, False, 0)
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_capture_action(idx))
+            self.capture_buttons.append(btn)
+            vbox.pack_start(btn, False, False, 0)
 
-        main_vbox.pack_start(tools_box, True, True, 0)
-
-        # Footer
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        footer.set_margin_bottom(10)
-        footer.set_margin_left(18)
-        footer.set_margin_right(18)
-
-        hint = Gtk.Label()
-        hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] EXECUTE   [ ESC / Q ] CLOSE</span>")
-        hint.set_xalign(0.5)
-        footer.pack_start(hint, True, True, 0)
-        main_vbox.pack_start(footer, False, False, 0)
-
-        self.stack.add_named(main_vbox, "main")
+        self.stack.add_named(vbox, "capture")
 
     def build_rec_view(self):
         rec_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         # Header
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         header.get_style_context().add_class("header-box")
 
         title = Gtk.Label()
-        title.set_markup(f"<span font_weight='bold' font_size='11500' foreground='{self.pal['red']}'>🎥 MISSION RECORDER // CONFIGURATION</span>")
+        title.set_markup(f"<span font_weight='bold' font_size='11000' foreground='{self.pal['red']}'>🎥 MISSION RECORDER // CONFIGURATION</span>")
         title.set_xalign(0.0)
         header.pack_start(title, False, False, 0)
 
@@ -348,21 +457,19 @@ class SpaceToolsDialog(Gtk.Window):
         header.pack_start(sub, False, False, 0)
         rec_vbox.pack_start(header, False, False, 0)
 
-        # Configuration body
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        body.set_margin_top(12)
-        body.set_margin_bottom(12)
-        body.set_margin_left(18)
-        body.set_margin_right(18)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        body.set_margin_top(10)
+        body.set_margin_bottom(10)
+        body.set_margin_left(16)
+        body.set_margin_right(16)
 
         self.rec_ctrl_items = []
 
         # 0: Mode Area
         self.btn_mode_area = Gtk.EventBox()
         self.btn_mode_area.get_style_context().add_class("toggle-btn")
-        lbl_ma = Gtk.Label()
-        self.lbl_mode_area = lbl_ma
-        self.btn_mode_area.add(lbl_ma)
+        self.lbl_mode_area = Gtk.Label()
+        self.btn_mode_area.add(self.lbl_mode_area)
         self.btn_mode_area.connect("button-press-event", lambda w, e: self.toggle_rec_mode("area"))
         body.pack_start(self.btn_mode_area, False, False, 0)
         self.rec_ctrl_items.append(self.btn_mode_area)
@@ -370,9 +477,8 @@ class SpaceToolsDialog(Gtk.Window):
         # 1: Mode Fullscreen
         self.btn_mode_full = Gtk.EventBox()
         self.btn_mode_full.get_style_context().add_class("toggle-btn")
-        lbl_mf = Gtk.Label()
-        self.lbl_mode_full = lbl_mf
-        self.btn_mode_full.add(lbl_mf)
+        self.lbl_mode_full = Gtk.Label()
+        self.btn_mode_full.add(self.lbl_mode_full)
         self.btn_mode_full.connect("button-press-event", lambda w, e: self.toggle_rec_mode("full"))
         body.pack_start(self.btn_mode_full, False, False, 0)
         self.rec_ctrl_items.append(self.btn_mode_full)
@@ -380,9 +486,8 @@ class SpaceToolsDialog(Gtk.Window):
         # 2: System Audio Toggle
         self.btn_sys_audio = Gtk.EventBox()
         self.btn_sys_audio.get_style_context().add_class("toggle-btn")
-        lbl_sa = Gtk.Label()
-        self.lbl_sys_audio = lbl_sa
-        self.btn_sys_audio.add(lbl_sa)
+        self.lbl_sys_audio = Gtk.Label()
+        self.btn_sys_audio.add(self.lbl_sys_audio)
         self.btn_sys_audio.connect("button-press-event", lambda w, e: self.toggle_opt("sys_audio"))
         body.pack_start(self.btn_sys_audio, False, False, 0)
         self.rec_ctrl_items.append(self.btn_sys_audio)
@@ -390,19 +495,17 @@ class SpaceToolsDialog(Gtk.Window):
         # 3: Microphone Audio Toggle
         self.btn_mic_audio = Gtk.EventBox()
         self.btn_mic_audio.get_style_context().add_class("toggle-btn")
-        lbl_mi = Gtk.Label()
-        self.lbl_mic_audio = lbl_mi
-        self.btn_mic_audio.add(lbl_mi)
+        self.lbl_mic_audio = Gtk.Label()
+        self.btn_mic_audio.add(self.lbl_mic_audio)
         self.btn_mic_audio.connect("button-press-event", lambda w, e: self.toggle_opt("mic_audio"))
         body.pack_start(self.btn_mic_audio, False, False, 0)
         self.rec_ctrl_items.append(self.btn_mic_audio)
 
-        # 4: Keystroke Overlay Toggle (Default OFF)
+        # 4: Keystroke Overlay Toggle (Security strict: default OFF)
         self.btn_keys = Gtk.EventBox()
         self.btn_keys.get_style_context().add_class("toggle-btn")
-        lbl_ky = Gtk.Label()
-        self.lbl_keys = lbl_ky
-        self.btn_keys.add(lbl_ky)
+        self.lbl_keys = Gtk.Label()
+        self.btn_keys.add(self.lbl_keys)
         self.btn_keys.connect("button-press-event", lambda w, e: self.toggle_opt("keystrokes"))
         body.pack_start(self.btn_keys, False, False, 0)
         self.rec_ctrl_items.append(self.btn_keys)
@@ -427,76 +530,144 @@ class SpaceToolsDialog(Gtk.Window):
         self.btn_back.get_style_context().add_class("action-btn")
         self.lbl_back = Gtk.Label()
         self.btn_back.add(self.lbl_back)
-        self.btn_back.connect("button-press-event", lambda w, e: self.switch_to_main_view())
+        self.btn_back.connect("button-press-event", lambda w, e: self.switch_tab("capture"))
         act_box.pack_start(self.btn_back, True, True, 0)
         self.rec_ctrl_items.append(self.btn_back)
 
         body.pack_start(act_box, False, False, 0)
         rec_vbox.pack_start(body, True, True, 0)
 
-        # Footer
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        footer.set_margin_bottom(10)
-        footer.set_margin_left(18)
-        footer.set_margin_right(18)
-
-        hint = Gtk.Label()
-        hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ S/M/K ] TOGGLE   [ ENTER/R ] ENGAGE   [ ESC ] BACK</span>")
-        hint.set_xalign(0.5)
-        footer.pack_start(hint, True, True, 0)
-        rec_vbox.pack_start(footer, False, False, 0)
-
         self.stack.add_named(rec_vbox, "rec")
-        self.refresh_rec_ui()
 
-    def refresh_rec_ui(self):
-        # Mode Area
-        ma_act = (self.rec_mode == "area")
-        ma_col = self.pal['accent'] if ma_act else self.pal['text_dim']
-        self.lbl_mode_area.set_markup(f"<span font_weight='bold' foreground='{ma_col}'>[{'●' if ma_act else '○'}] [1] REGION SELECTION (Drag area with slurp)</span>")
-        self.lbl_mode_area.set_xalign(0.0)
+    def build_system_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        vbox.set_margin_top(10)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
 
-        # Mode Full
-        mf_act = (self.rec_mode == "full")
-        mf_col = self.pal['accent'] if mf_act else self.pal['text_dim']
-        self.lbl_mode_full.set_markup(f"<span font_weight='bold' foreground='{mf_col}'>[{'●' if mf_act else '○'}] [2] FULL SCREEN DISPLAY (All monitors)</span>")
-        self.lbl_mode_full.set_xalign(0.0)
+        # 1. System Health Telemetry Summary Card
+        health_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        health_card.get_style_context().add_class("card-panel")
 
-        # Sys Audio
-        sa_col = self.pal['green'] if self.rec_sys_audio else self.pal['text_dim']
-        sa_txt = "[ ON  ]" if self.rec_sys_audio else "[ OFF ]"
-        self.lbl_sys_audio.set_markup(f"<span font_weight='bold' foreground='{sa_col}'>[{'✔' if self.rec_sys_audio else ' '}] [S] DESKTOP AUDIO (System sounds): {sa_txt}</span>")
-        self.lbl_sys_audio.set_xalign(0.0)
+        self.lbl_health_telemetry = Gtk.Label()
+        self.lbl_health_telemetry.set_xalign(0.0)
+        health_card.pack_start(self.lbl_health_telemetry, False, False, 0)
+        vbox.pack_start(health_card, False, False, 0)
 
-        # Mic Audio
-        mi_col = self.pal['green'] if self.rec_mic_audio else self.pal['text_dim']
-        mi_txt = "[ ON  ]" if self.rec_mic_audio else "[ OFF ]"
-        self.lbl_mic_audio.set_markup(f"<span font_weight='bold' foreground='{mi_col}'>[{'✔' if self.rec_mic_audio else ' '}] [M] MICROPHONE (Intercom voice): {mi_txt}</span>")
-        self.lbl_mic_audio.set_xalign(0.0)
+        # 2. System Tools & Actions List
+        self.system_tool_items = [
+            {
+                "key": "1",
+                "title": "⚡ INSTANT BTRFS RECOVERY SNAPSHOT",
+                "sub": "Create timestamped read-only root snapshot (/@snapshots/manual-*)",
+                "action": "btrfs_snap"
+            },
+            {
+                "key": "2",
+                "title": "🤖 RUN AI SYSTEM DIAGNOSIS",
+                "sub": "Launch configured AI engine (AGY/Claude/Aider/Ollama) with log telemetry",
+                "action": "ai_diagnose"
+            },
+            {
+                "key": "3",
+                "title": "⚙️ CONFIGURE AI RECOVERY ENGINE",
+                "sub": "Select active AI service: agy, claude, aider, ollama, or custom harness",
+                "action": "ai_config"
+            },
+            {
+                "key": "4",
+                "title": "🧹 CLEAR RECOVERY FLAGS & DUMP",
+                "sub": "Purge ~/.cache failure dump and resolve active warning flag in sys-mem",
+                "action": "ai_clean"
+            },
+            {
+                "key": "5",
+                "title": "🔄 REBUILD RAMDISKS (MKINITCPIO)",
+                "sub": "Regenerate all kernel initial ramdisk images (sudo mkinitcpio -P)",
+                "action": "rebuild_ramdisks"
+            },
+            {
+                "key": "6",
+                "title": "🧹 CLEAN PACMAN CACHE & ORPHANS",
+                "sub": "Run paccache -r and purge unneeded orphaned dependencies safely",
+                "action": "clean_pkgs"
+            }
+        ]
 
-        # Keystrokes (Security strict: default OFF)
-        ky_col = self.pal['cyan'] if self.rec_keystrokes else self.pal['text_dim']
-        ky_txt = "[ ON  ]" if self.rec_keystrokes else "[ OFF ]"
-        self.lbl_keys.set_markup(f"<span font_weight='bold' foreground='{ky_col}'>[{'✔' if self.rec_keystrokes else ' '}] [K] SHOW KEYSTROKES (On-screen overlay): {ky_txt}</span>")
-        self.lbl_keys.set_xalign(0.0)
+        self.system_buttons = []
+        for i, item in enumerate(self.system_tool_items):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
 
-        # Action buttons
-        self.lbl_engage.set_markup(f"<span font_weight='bold' foreground='{self.pal['green']}'>[ ENTER / R ] START RECORDING</span>")
-        self.lbl_back.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_sub']}'>[ ESC / B ] CANCEL &amp; RETURN</span>")
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn.add(row_box)
 
-        # Update selection class
-        for i, btn in enumerate(self.rec_ctrl_items):
-            ctx = btn.get_style_context()
-            if i == self.selected_idx:
-                ctx.add_class("selected")
-            else:
-                ctx.remove_class("selected")
+            badge = Gtk.Label()
+            badge.set_markup(f"<span font_weight='bold' font_size='10000' foreground='{self.pal['accent']}'>[{item['key']}]</span>")
+            row_box.pack_start(badge, False, False, 0)
 
-    def refresh_main_ui(self):
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>{item['title']}</span>")
+            t_lbl.set_xalign(0.0)
+            text_vbox.pack_start(t_lbl, False, False, 0)
+
+            s_lbl = Gtk.Label()
+            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
+            s_lbl.set_xalign(0.0)
+            text_vbox.pack_start(s_lbl, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_system_action(idx))
+            self.system_buttons.append(btn)
+            vbox.pack_start(btn, False, False, 0)
+
+        self.stack.add_named(vbox, "system")
+
+    def refresh_system_telemetry(self):
+        # 1. Active AI Engine & Alert Status
+        ai_engine = get_ai_engine().upper()
+        alert_active = is_recovery_alert_active()
+        alert_badge = f"<span foreground='{self.pal['red']}' font_weight='bold'>⚠️ ALERT ACTIVE (Crash Log Cached)</span>" if alert_active else f"<span foreground='{self.pal['green']}' font_weight='bold'>✅ NOMINAL (Clean)</span>"
+
+        # 2. Kernel & System info
+        current_kernel = os.uname().release
+        
+        # 3. Failed units count
+        try:
+            out = subprocess.check_output(["systemctl", "--failed", "--no-legend", "--plain"], text=True, stderr=subprocess.DEVNULL)
+            failed_count = len([line for line in out.splitlines() if line.strip()])
+        except Exception:
+            failed_count = 0
+        failed_badge = f"<span foreground='{self.pal['green']}'>0 Failed</span>" if failed_count == 0 else f"<span foreground='{self.pal['red']}'>{failed_count} Failed</span>"
+
+        # 4. Boot partition space
+        boot_space = "N/A"
+        try:
+            st = os.statvfs("/boot")
+            free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+            total_mb = (st.f_blocks * st.f_frsize) / (1024 * 1024)
+            used_pct = int(((total_mb - free_mb) / total_mb) * 100)
+            boot_space = f"{used_pct}% ({int(free_mb)}MB free)"
+        except Exception:
+            pass
+
+        markup = (
+            f"<span font_weight='bold' foreground='{self.pal['text_main']}'>🛡️ SYSTEM INTEGRITY &amp; RECOVERY TELEMETRY</span>\n"
+            f"<span font_size='8500' foreground='{self.pal['text_sub']}'>"
+            f"• <b>AI Harness:</b> <span foreground='{self.pal['cyan']}'>{ai_engine}</span>  |  <b>Recovery Status:</b> {alert_badge}\n"
+            f"• <b>Active Kernel:</b> {current_kernel}  |  <b>Units:</b> {failed_badge}  |  <b>/boot:</b> {boot_space}"
+            f"</span>"
+        )
+        self.lbl_health_telemetry.set_markup(markup)
+
+    def refresh_capture_ui(self):
         rec_active = is_recording_active()
-        for i, btn in enumerate(self.main_buttons):
+        for i, btn in enumerate(self.capture_buttons):
             ctx = btn.get_style_context()
-            if i == self.selected_idx:
+            if i == self.capture_selected_idx:
                 ctx.add_class("selected")
             else:
                 ctx.remove_class("selected")
@@ -507,15 +678,67 @@ class SpaceToolsDialog(Gtk.Window):
                 else:
                     ctx.remove_class("active-rec")
 
-    def switch_to_main_view(self):
+    def refresh_system_ui(self):
+        self.refresh_system_telemetry()
+        for i, btn in enumerate(self.system_buttons):
+            ctx = btn.get_style_context()
+            if i == self.system_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def refresh_rec_ui(self):
+        ma_act = (self.rec_mode == "area")
+        ma_col = self.pal['accent'] if ma_act else self.pal['text_dim']
+        self.lbl_mode_area.set_markup(f"<span font_weight='bold' foreground='{ma_col}'>[{'●' if ma_act else '○'}] [1] REGION SELECTION (Drag area with slurp)</span>")
+        self.lbl_mode_area.set_xalign(0.0)
+
+        mf_act = (self.rec_mode == "full")
+        mf_col = self.pal['accent'] if mf_act else self.pal['text_dim']
+        self.lbl_mode_full.set_markup(f"<span font_weight='bold' foreground='{mf_col}'>[{'●' if mf_act else '○'}] [2] FULL SCREEN DISPLAY (All monitors)</span>")
+        self.lbl_mode_full.set_xalign(0.0)
+
+        sa_col = self.pal['green'] if self.rec_sys_audio else self.pal['text_dim']
+        sa_txt = "[ ON  ]" if self.rec_sys_audio else "[ OFF ]"
+        self.lbl_sys_audio.set_markup(f"<span font_weight='bold' foreground='{sa_col}'>[{'✔' if self.rec_sys_audio else ' '}] [S] DESKTOP AUDIO (System sounds): {sa_txt}</span>")
+        self.lbl_sys_audio.set_xalign(0.0)
+
+        mi_col = self.pal['green'] if self.rec_mic_audio else self.pal['text_dim']
+        mi_txt = "[ ON  ]" if self.rec_mic_audio else "[ OFF ]"
+        self.lbl_mic_audio.set_markup(f"<span font_weight='bold' foreground='{mi_col}'>[{'✔' if self.rec_mic_audio else ' '}] [M] MICROPHONE (Intercom voice): {mi_txt}</span>")
+        self.lbl_mic_audio.set_xalign(0.0)
+
+        ky_col = self.pal['cyan'] if self.rec_keystrokes else self.pal['text_dim']
+        ky_txt = "[ ON  ]" if self.rec_keystrokes else "[ OFF ]"
+        self.lbl_keys.set_markup(f"<span font_weight='bold' foreground='{ky_col}'>[{'✔' if self.rec_keystrokes else ' '}] [K] SHOW KEYSTROKES (On-screen overlay): {ky_txt}</span>")
+        self.lbl_keys.set_xalign(0.0)
+
+        self.lbl_engage.set_markup(f"<span font_weight='bold' foreground='{self.pal['green']}'>[ ENTER / R ] START RECORDING</span>")
+        self.lbl_back.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_sub']}'>[ ESC / B ] CANCEL &amp; RETURN</span>")
+
+        for i, btn in enumerate(self.rec_ctrl_items):
+            ctx = btn.get_style_context()
+            if i == self.rec_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def switch_tab(self, tab_name):
+        self.active_tab = tab_name
         self.current_view = "main"
-        self.selected_idx = 0
-        self.refresh_main_ui()
-        self.stack.set_visible_child_name("main")
+        self.update_tab_headers()
+
+        if tab_name == "capture":
+            self.refresh_capture_ui()
+            self.stack.set_visible_child_name("capture")
+        elif tab_name == "system":
+            self.refresh_system_ui()
+            self.stack.set_visible_child_name("system")
 
     def switch_to_rec_view(self):
+        self.active_tab = "capture"
         self.current_view = "rec"
-        self.selected_idx = 0
+        self.rec_selected_idx = 0
         self.refresh_rec_ui()
         self.stack.set_visible_child_name("rec")
 
@@ -542,12 +765,10 @@ class SpaceToolsDialog(Gtk.Window):
             cmd.append("--mic-audio")
         if self.rec_keystrokes:
             cmd.append("--keystrokes")
-
-        # Slight delay to ensure dialog has unmapped from compositor
         GLib.timeout_add(150, lambda: (subprocess.Popen(cmd, start_new_session=True), Gtk.main_quit()))
 
-    def trigger_main_action(self, idx):
-        item = self.tool_items[idx]
+    def trigger_capture_action(self, idx):
+        item = self.capture_tool_items[idx]
         action = item["action"]
 
         if action == "area_shot":
@@ -560,7 +781,6 @@ class SpaceToolsDialog(Gtk.Window):
             GLib.timeout_add(150, lambda: (subprocess.Popen(["space-capture", "full"], start_new_session=True), Gtk.main_quit()))
         elif action == "rec_menu":
             if is_recording_active():
-                # Stop recording
                 self.hide()
                 cleanup()
                 subprocess.Popen(["space-capture", "stop"], start_new_session=True)
@@ -582,42 +802,120 @@ class SpaceToolsDialog(Gtk.Window):
             subprocess.Popen(["xdg-open", v_dir], start_new_session=True)
             Gtk.main_quit()
 
+    def trigger_system_action(self, idx):
+        item = self.system_tool_items[idx]
+        action = item["action"]
+
+        if action == "btrfs_snap":
+            self.hide()
+            cleanup()
+            ts = time.strftime('%Y%m%d-%H%M%S')
+            snap_cmd = f"sudo btrfs subvolume snapshot -r / /@snapshots/manual-{ts} 2>/dev/null || sudo btrfs subvolume snapshot -r / /.snapshots/manual-{ts} 2>/dev/null || sudo btrfs subvolume snapshot -r / /snapshots-manual-{ts}"
+            launch_in_terminal(
+                f"echo '==> Creating Btrfs Root Recovery Snapshot...'; {snap_cmd} && echo '✅ Snapshot created successfully!' && notify-send -u normal -a 'Apollo Ops' '📸 Btrfs Snapshot Created' 'Saved root snapshot for recovery.'",
+                title="Btrfs Snapshot Subsystem"
+            )
+            Gtk.main_quit()
+        elif action == "ai_diagnose":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-ai-recovery", title="Apollo AI Diagnostic Harness")
+            Gtk.main_quit()
+        elif action == "ai_config":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-ai-recovery --config", title="Apollo AI Engine Configurator")
+            Gtk.main_quit()
+        elif action == "ai_clean":
+            subprocess.run(["space-ai-recovery", "--clean"], capture_output=True)
+            self.refresh_system_ui()
+            if shutil.which("notify-send"):
+                subprocess.Popen(["notify-send", "-a", "Apollo Ops", "🧹 Recovery State Cleaned", "Purged failure logs and resolved active warnings."], start_new_session=True)
+        elif action == "rebuild_ramdisks":
+            self.hide()
+            cleanup()
+            launch_in_terminal("echo '==> Rebuilding Initramfs for all installed kernels...'; sudo mkinitcpio -P && echo '✅ Ramdisks regenerated successfully!'", title="Ramdisk Maintenance")
+            Gtk.main_quit()
+        elif action == "clean_pkgs":
+            self.hide()
+            cleanup()
+            launch_in_terminal("echo '==> Cleaning Pacman cache and unneeded orphans...'; sudo paccache -r; sudo pacman -Rns $(pacman -Qdtq) 2>/dev/null || echo 'No orphans found.'; echo '✅ Package maintenance complete!'", title="Package & Cache Maintenance")
+            Gtk.main_quit()
+
     def on_key_press(self, widget, event):
         keyname = Gdk.keyval_name(event.keyval)
 
-        if self.current_view == "main":
-            if keyname in ["Escape", "q", "Q"]:
-                cleanup()
-                Gtk.main_quit()
+        # Global Esc / Quit
+        if keyname in ["Escape", "q", "Q"]:
+            if self.current_view == "rec":
+                self.switch_tab("capture")
                 return True
-            if keyname in ["Down", "j", "J", "Tab"]:
-                self.selected_idx = (self.selected_idx + 1) % len(self.tool_items)
-                self.refresh_main_ui()
+            cleanup()
+            Gtk.main_quit()
+            return True
+
+        # Tab Switching
+        if keyname in ["c", "C"] and self.current_view != "rec":
+            self.switch_tab("capture")
+            return True
+        if keyname in ["s", "S"] and self.current_view != "rec":
+            self.switch_tab("system")
+            return True
+
+        # Capture Tab Navigation
+        if self.active_tab == "capture" and self.current_view == "main":
+            if keyname in ["Down", "j", "J"]:
+                self.capture_selected_idx = (self.capture_selected_idx + 1) % len(self.capture_tool_items)
+                self.refresh_capture_ui()
                 return True
-            if keyname in ["Up", "k", "K", "ISO_Left_Tab"]:
-                self.selected_idx = (self.selected_idx - 1 + len(self.tool_items)) % len(self.tool_items)
-                self.refresh_main_ui()
+            if keyname in ["Up", "k", "K"]:
+                self.capture_selected_idx = (self.capture_selected_idx - 1 + len(self.capture_tool_items)) % len(self.capture_tool_items)
+                self.refresh_capture_ui()
+                return True
+            if keyname in ["Tab", "ISO_Left_Tab"]:
+                self.switch_tab("system")
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
-                self.trigger_main_action(self.selected_idx)
+                self.trigger_capture_action(self.capture_selected_idx)
                 return True
             if keyname in ["1", "2", "3", "4", "5"]:
                 idx = int(keyname) - 1
-                if 0 <= idx < len(self.tool_items):
-                    self.trigger_main_action(idx)
+                if 0 <= idx < len(self.capture_tool_items):
+                    self.trigger_capture_action(idx)
                     return True
             return False
 
-        elif self.current_view == "rec":
-            if keyname in ["Escape", "BackSpace", "b", "B", "q", "Q"]:
-                self.switch_to_main_view()
+        # System Tab Navigation
+        elif self.active_tab == "system" and self.current_view == "main":
+            if keyname in ["Down", "j", "J"]:
+                self.system_selected_idx = (self.system_selected_idx + 1) % len(self.system_tool_items)
+                self.refresh_system_ui()
                 return True
+            if keyname in ["Up", "k", "K"]:
+                self.system_selected_idx = (self.system_selected_idx - 1 + len(self.system_tool_items)) % len(self.system_tool_items)
+                self.refresh_system_ui()
+                return True
+            if keyname in ["Tab", "ISO_Left_Tab"]:
+                self.switch_tab("capture")
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.trigger_system_action(self.system_selected_idx)
+                return True
+            if keyname in ["1", "2", "3", "4", "5", "6"]:
+                idx = int(keyname) - 1
+                if 0 <= idx < len(self.system_tool_items):
+                    self.trigger_system_action(idx)
+                    return True
+            return False
+
+        # Recorder Sub-view Navigation
+        elif self.current_view == "rec":
             if keyname in ["Down", "j", "J", "Tab"]:
-                self.selected_idx = (self.selected_idx + 1) % len(self.rec_ctrl_items)
+                self.rec_selected_idx = (self.rec_selected_idx + 1) % len(self.rec_ctrl_items)
                 self.refresh_rec_ui()
                 return True
             if keyname in ["Up", "k", "K", "ISO_Left_Tab"]:
-                self.selected_idx = (self.selected_idx - 1 + len(self.rec_ctrl_items)) % len(self.rec_ctrl_items)
+                self.rec_selected_idx = (self.rec_selected_idx - 1 + len(self.rec_ctrl_items)) % len(self.rec_ctrl_items)
                 self.refresh_rec_ui()
                 return True
             if keyname in ["1"]:
@@ -639,20 +937,20 @@ class SpaceToolsDialog(Gtk.Window):
                 self.start_rec()
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
-                if self.selected_idx == 0:
+                if self.rec_selected_idx == 0:
                     self.toggle_rec_mode("area")
-                elif self.selected_idx == 1:
+                elif self.rec_selected_idx == 1:
                     self.toggle_rec_mode("full")
-                elif self.selected_idx == 2:
+                elif self.rec_selected_idx == 2:
                     self.toggle_opt("sys_audio")
-                elif self.selected_idx == 3:
+                elif self.rec_selected_idx == 3:
                     self.toggle_opt("mic_audio")
-                elif self.selected_idx == 4:
+                elif self.rec_selected_idx == 4:
                     self.toggle_opt("keystrokes")
-                elif self.selected_idx == 5:
+                elif self.rec_selected_idx == 5:
                     self.start_rec()
-                elif self.selected_idx == 6:
-                    self.switch_to_main_view()
+                elif self.rec_selected_idx == 6:
+                    self.switch_tab("capture")
                 return True
             return False
 
@@ -696,8 +994,10 @@ def cleanup():
 
 def main():
     check_singleton()
+    init_tab = "system" if (len(sys.argv) > 1 and sys.argv[1] in ["system", "recovery", "health"]) else "capture"
     init_view = "rec" if (len(sys.argv) > 1 and sys.argv[1] in ["rec", "record"]) else "main"
-    win = SpaceToolsDialog(initial_view=init_view)
+
+    win = SpaceToolsDialog(initial_tab=init_tab, initial_view=init_view)
     win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
     win.show_all()
     Gtk.main()
