@@ -68,6 +68,14 @@ The environment features four authentic vintage flight-deck profiles switchable 
 
 <br/>
 
+### 🎙️ CAPCOM Audio & Radio Intercom Console
+<p align="center">
+  <img src="assets/12_capcom_audio.png" alt="CAPCOM Audio Intercom" width="85%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</p>
+<p align="center"><i>Dual VU meters, WirePlumber device routing, volume dispatch, and authentic Quindar audio test tones.</i></p>
+
+<br/>
+
 ### 🛰️ ISS Real-Time Orbital Tracker & Mission Tools Studio
 <p align="center">
   <img src="assets/09_iss_orbital_tracker.png" alt="ISS Tracker" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
