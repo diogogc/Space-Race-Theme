@@ -90,6 +90,13 @@ The environment features four authentic vintage flight-deck profiles switchable 
   <img src="assets/08_tools_studio.png" alt="Tools Studio" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
 </p>
 
+### 🕹️ 8-Bit Retro Space Multi-Scene Screensaver
+<p align="center">
+  <img src="assets/14_screensaver_lunar.png" alt="Apollo 11 Lunar Landing Screensaver" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+  <img src="assets/15_screensaver_gagarin.png" alt="Vostok 1 Yuri Gagarin Screensaver" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</p>
+<p align="center"><i>Nearest-neighbor $480 \times 270$ retro pixel scaling across 5 historical spaceflight simulation scenes.</i></p>
+
 <br/>
 
 ### 🚨 Emergency Flight Abort & Keybinding Flight Directory

@@ -1,5 +1,1 @@
-{
-  "timeout_minutes": 5,
-  "lock_on_wake": true,
-  "scene_mode": "all"
-}
+{"timeout_minutes": 5, "lock_on_wake": false, "scene_mode": "all"}
