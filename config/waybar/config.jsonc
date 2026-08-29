@@ -7,7 +7,6 @@
     "margin-top": 4,
     "margin-left": 8,
     "margin-right": 8,
-    
     "modules-left": [
         "hyprland/workspaces",
         "hyprland/window"
@@ -16,7 +15,6 @@
         "custom/telemetry"
     ],
     "modules-right": [
-        "custom/recording",
         "custom/tools",
         "custom/iss",
         "custom/met",
@@ -24,9 +22,7 @@
         "custom/network-telemetry",
         "custom/power-telemetry",
         "custom/power"
-        // "tray" // Uncomment to restore default systray applet icons (e.g. nm-applet, blueman)
     ],
-
     "custom/tools": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-capture tools-status",
@@ -36,7 +32,6 @@
         "on-click": "$HOME/.local/bin/space-tools-dialog",
         "on-click-right": "$HOME/.local/bin/space-capture area"
     },
-
     "custom/recording": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-capture status",
@@ -45,7 +40,6 @@
         "tooltip": true,
         "on-click": "$HOME/.local/bin/space-capture stop"
     },
-
     "custom/iss": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-iss-telemetry",
@@ -55,20 +49,17 @@
         "on-click": "$HOME/.local/bin/space-iss-dialog",
         "on-click-right": "$HOME/.local/bin/spaceera-iss-tracker --fetch-tle"
     },
-
     "hyprland/workspaces": {
         "disable-scroll": false,
         "all-outputs": true,
         "format": "{name}",
         "on-click": "activate"
     },
-
     "hyprland/window": {
         "format": "{}",
         "max-length": 40,
         "separate-outputs": true
     },
-
     "custom/telemetry": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-telemetry",
@@ -78,7 +69,6 @@
         "on-click": "$HOME/.local/bin/space-telemetry-dialog",
         "on-click-right": "$HOME/.local/bin/space-telemetry-dialog"
     },
-
     "custom/met": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-met",
@@ -86,19 +76,21 @@
         "interval": 1,
         "tooltip": true
     },
-
     "pulseaudio": {
         "format": "VOL {volume}%",
         "format-muted": "VOL MUTED",
         "format-icons": {
-            "default": ["", "", ""]
+            "default": [
+                "",
+                "",
+                ""
+            ]
         },
-        "tooltip-format": "🎙️ APOLLO CAPCOM &amp; INTERCOM AUDIO CONSOLE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• OUTPUT LEVEL : {volume}%\n• ENDPOINT     : {desc}\n• Click        : Open CAPCOM Console (SUPER+SHIFT+V)\n• Right-Click  : Quick Mute Toggle",
+        "tooltip-format": "\ud83c\udf99\ufe0f APOLLO CAPCOM &amp; INTERCOM AUDIO CONSOLE\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\u2022 OUTPUT LEVEL : {volume}%\n\u2022 ENDPOINT     : {desc}\n\u2022 Click        : Open CAPCOM Console (SUPER+SHIFT+V)\n\u2022 Right-Click  : Quick Mute Toggle",
         "on-click": "$HOME/.local/bin/space-capcom-dialog",
         "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
         "scroll-step": 5
     },
-
     "custom/network-telemetry": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-network-telemetry",
@@ -108,7 +100,6 @@
         "on-click": "$HOME/.local/bin/space-network-dialog",
         "on-click-right": "$HOME/.local/bin/space-network-dialog"
     },
-
     "custom/power-telemetry": {
         "format": "{}",
         "exec": "$HOME/.local/bin/space-power-telemetry",
@@ -118,20 +109,13 @@
         "on-click": "$HOME/.local/bin/space-energy-dialog",
         "on-click-right": "$HOME/.local/bin/space-energy-dialog"
     },
-
     "clock": {
         "format": "{:%H:%M:%S LOC}",
         "interval": 1,
         "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
     },
-
-    // "tray": {
-    //     "icon-size": 16,
-    //     "spacing": 8
-    // },
-
     "custom/power": {
-        "format": "[ ⏻ OPP ]",
+        "format": "[ \u23fb OPP ]",
         "tooltip": true,
         "tooltip-format": "Apollo Flight Operations Menu (SUPER + SHIFT + M)\nClick: Open Operations Dispatch (Shutdown, Reboot, Suspend, Lock, Logout)\nRight-Click: Lock Screen",
         "on-click": "$HOME/.local/bin/space-power-menu",

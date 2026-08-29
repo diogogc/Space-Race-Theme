@@ -126,12 +126,13 @@ SCENE_PRESETS = [
 ]
 
 ALL_WAYBAR_MODULES = [
-    {"id": "custom/tools", "label": "TOOL - Operations & Capture Console", "default": True},
+    {"id": "custom/tools", "label": "TOOL - Mission Operations & Capture Console", "default": True},
     {"id": "custom/iss", "label": "ISS - Orbital Tracking Telemetry", "default": True},
     {"id": "custom/met", "label": "MET - Mission Elapsed Time Clock", "default": True},
-    {"id": "pulseaudio", "label": "AUDIO - CAPCOM Volume & Intercom", "default": True},
-    {"id": "custom/network-telemetry", "label": "NET - Communications & Wi-Fi Radar", "default": True},
-    {"id": "custom/power-telemetry", "label": "PWR - MDC-02 Energy & Battery Gauge", "default": True},
+    {"id": "pulseaudio", "label": "CAPCOM - Audio Intercom & Volume Menu", "default": True},
+    {"id": "custom/network-telemetry", "label": "S-METER - Communications & Signal Telemetry", "default": True},
+    {"id": "custom/power-telemetry", "label": "MDC-02 - Power & Energy Profile Telemetry", "default": True},
+    {"id": "custom/power", "label": "OPP - Flight Operations & Emergency Power Menu", "default": True},
     {"id": "tray", "label": "TRAY - System Tray Applet Icons", "default": False},
 ]
 
@@ -366,29 +367,29 @@ class SpaceThemeConfigDialog(Gtk.Window):
             self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
             self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] TOOLBAR</span>")
             self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / W / S / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-4 / ENTER ] APPLY THEME   [ ESC ] CLOSE</span>")
         elif self.active_tab == "wallpaper":
             self.tab_wallpaper.get_style_context().add_class("active")
             self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🌌 [W] WALLPAPERS</span>")
             self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] TOOLBAR</span>")
             self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / S / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ ENTER ] SET WALLPAPER   [ C ] CYCLE (Super+Alt+W)   [ ESC ] CLOSE</span>")
         elif self.active_tab == "screensaver":
             self.tab_screensaver.get_style_context().add_class("active")
             self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
             self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛸 [S] SCREENSAVER</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] WAYBAR</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] TOOLBAR</span>")
             self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W / M ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / ENTER ] SELECT   [ P ] PREVIEW   [ ESC ] CLOSE</span>")
         elif self.active_tab == "modules":
             self.tab_modules.get_style_context().add_class("active")
             self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
             self.lbl_tab_wallpaper.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🌌 [W] WALLPAPERS</span>")
             self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
-            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📊 [M] WAYBAR</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / 1-7 ] TOGGLE   [ ESC ] CLOSE</span>")
+            self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📊 [M] TOOLBAR</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / W / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ SPACE / 1-8 ] TOGGLE   [ ESC ] CLOSE</span>")
 
     def build_theme_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -671,12 +672,12 @@ class SpaceThemeConfigDialog(Gtk.Window):
         card.get_style_context().add_class("card-panel")
 
         l1 = Gtk.Label()
-        l1.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_main']}'>📊 WAYBAR MENUBAR MODULE VISIBILITY</span>")
+        l1.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_main']}'>📊 ToolBar Module Visibility</span>")
         l1.set_xalign(0.0)
         card.pack_start(l1, False, False, 0)
 
         l2 = Gtk.Label()
-        l2.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Toggle individual instruments on the mission top bar. Changes apply live immediately.</span>")
+        l2.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Toggle individual instruments on the mission top toolbar. Changes apply live immediately.</span>")
         l2.set_xalign(0.0)
         card.pack_start(l2, False, False, 0)
         vbox.pack_start(card, False, False, 0)
@@ -951,7 +952,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
             if keyname in ["Return", "KP_Enter", "space"]:
                 self.toggle_waybar_module(self.mod_selected_idx)
                 return True
-            if keyname in ["1", "2", "3", "4", "5", "6", "7"]:
+            if keyname in ["1", "2", "3", "4", "5", "6", "7", "8"]:
                 idx = int(keyname) - 1
                 if 0 <= idx < len(ALL_WAYBAR_MODULES):
                     self.toggle_waybar_module(idx)
