@@ -297,6 +297,8 @@ local mainMod = "SUPER" -- Sets "Windows" key as main modifier
 -- Example binds, see https://wiki.hypr.land/Configuring/Basics/Binds/ for more
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + SHIFT + T", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-theme-switch next"))
+hl.bind(mainMod .. " + ALT + T", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-theme-config"))
+hl.bind(mainMod .. " + ALT + W", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-wallpaper next"))
 hl.bind(mainMod .. " + SHIFT + K", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-keybinds"))
 local closeWindowBind = hl.bind(mainMod .. " + Q", hl.dsp.window.close())
 -- closeWindowBind:set_enabled(false)
@@ -308,6 +310,7 @@ hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local
 hl.bind(mainMod .. " + SHIFT + V", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-capcom-dialog"))
 hl.bind(mainMod .. " + SHIFT + A", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-capcom-dialog"))
 hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-default-apps"))
+hl.bind(mainMod .. " + SHIFT + R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-display"))
 hl.bind(mainMod .. " + SHIFT + O", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-screensaver"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
@@ -480,6 +483,24 @@ hl.window_rule({
     match = { class = "space-default-apps" },
     float = true,
     center = true,
+})
+
+-- Space Display Radar & Multi-Monitor Console
+hl.window_rule({
+    name  = "space-display-float",
+    match = { class = "space-display" },
+    float = true,
+    center = true,
+    pin   = true,
+})
+
+-- Space Theme & Visual Avionics Configurator
+hl.window_rule({
+    name  = "space-theme-config-float",
+    match = { class = "space-theme-config" },
+    float = true,
+    center = true,
+    pin   = true,
 })
 
 -- Space Screensaver Configuration Dialog
