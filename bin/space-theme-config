@@ -757,7 +757,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         except Exception as e:
             print(f"Error saving waybar config: {e}", file=sys.stderr)
 
-        subprocess.Popen(["killall", "-SIGUSR2", "waybar"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-x", "waybar"], check=False)
+        GLib.timeout_add(150, lambda: subprocess.Popen(["waybar"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         self.populate_module_rows()
         self.refresh_modules_ui()
 
