@@ -482,6 +482,8 @@ class SpaceToolsDialog(Gtk.Window):
         ]
 
         self.capture_buttons = []
+        self.capture_title_labels = []
+        self.capture_sub_labels = []
         for i, item in enumerate(self.capture_tool_items):
             btn = Gtk.EventBox()
             btn.get_style_context().add_class("tool-row")
@@ -500,11 +502,13 @@ class SpaceToolsDialog(Gtk.Window):
             t_lbl.set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>{item['title']}</span>")
             t_lbl.set_xalign(0.0)
             text_vbox.pack_start(t_lbl, False, False, 0)
+            self.capture_title_labels.append(t_lbl)
 
             s_lbl = Gtk.Label()
             s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
             s_lbl.set_xalign(0.0)
             text_vbox.pack_start(s_lbl, False, False, 0)
+            self.capture_sub_labels.append(s_lbl)
 
             btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_capture_action(idx))
             self.capture_buttons.append(btn)
@@ -915,8 +919,16 @@ class SpaceToolsDialog(Gtk.Window):
             if i == 2:
                 if rec_active:
                     ctx.add_class("active-rec")
+                    if i < len(self.capture_title_labels):
+                        self.capture_title_labels[i].set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['red']}'>🔴 STOP ACTIVE RECORDING [IN PROGRESS]</span>")
+                    if i < len(self.capture_sub_labels):
+                        self.capture_sub_labels[i].set_markup(f"<span font_size='8000' foreground='{self.pal['text_sub']}'>Click or press [3 / ENTER] to finalize video and save to ~/Videos</span>")
                 else:
                     ctx.remove_class("active-rec")
+                    if i < len(self.capture_title_labels):
+                        self.capture_title_labels[i].set_markup(f"<span font_weight='bold' font_size='9500' foreground='{self.pal['text_main']}'>🎥 SCREEN VIDEO RECORDER</span>")
+                    if i < len(self.capture_sub_labels):
+                        self.capture_sub_labels[i].set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Record video with audio/mic &amp; keystroke toggles (Shift + PrtScn)</span>")
 
     def refresh_system_ui(self):
         self.populate_system_tool_rows()
