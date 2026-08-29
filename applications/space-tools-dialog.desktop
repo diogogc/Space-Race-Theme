@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Operations & Capture Tools Console
+GenericName=Mission Tools & System Diagnostics
+Comment=Screenshots, Screen Video Recording, System Snapshots, Recovery, and Diagnostics
+Exec=space-tools-dialog
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Utility;System;
+Keywords=screenshot;record;capture;snapshot;recovery;diagnostics;ramdisk;tools;

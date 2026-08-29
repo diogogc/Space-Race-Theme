@@ -324,18 +324,48 @@ def get_all_apps():
                     if not assigned_cat:
                         assigned_cat = "Utilities"
                     
+                    # Determine application tier:
+                    # Tier 0: Custom Space Race / Apollo Mission Suite
+                    # Tier 1: Graphical User Interface (GUI) Applications
+                    # Tier 2: Terminal / Console (CLI) Applications
+                    is_terminal = cp.getboolean("Desktop Entry", "Terminal", fallback=False)
+                    basename = os.path.basename(path).lower()
+                    exec_low = clean_exec.lower()
+                    name_low = name.lower()
+
+                    is_custom_theme = (
+                        basename.startswith("space-") or basename.startswith("dsky-") or
+                        exec_low.startswith("space-") or exec_low.startswith("dsky-") or
+                        "/space-" in exec_low or "/dsky-" in exec_low or
+                        "space-race-theme" in path.lower() or
+                        any(name_low.startswith(p) for p in [
+                            "space ", "apollo ", "dsky ", "theme & visual", "operations &",
+                            "multi-monitor", "default applications", "mission elapsed", "capcom",
+                            "go / no-go", "moc power", "reboot flight"
+                        ])
+                    )
+
+                    if is_custom_theme:
+                        tier = 0
+                    elif not is_terminal:
+                        tier = 1
+                    else:
+                        tier = 2
+
                     apps.append({
                         "name": name,
                         "generic": generic,
                         "comment": comment,
                         "exec": clean_exec,
                         "category": assigned_cat,
+                        "tier": tier,
+                        "is_terminal": is_terminal,
                         "path": path,
                     })
                 except Exception:
                     continue
     
-    apps.sort(key=lambda x: x["name"].lower())
+    apps.sort(key=lambda x: (x["tier"], x["name"].lower()))
     return apps
 
 class DskyLauncher(Gtk.Window):
@@ -596,6 +626,28 @@ class DskyLauncher(Gtk.Window):
             margin-right: 8px;
             text-shadow: none;
         }}
+        .cat-code-custom {{
+            font-size: 8.5px;
+            font-weight: 900;
+            padding: 1px 5px;
+            border-radius: 1px;
+            border: 1px solid {t['accent']};
+            color: {t['accent']};
+            background-color: {t['bg_selected']};
+            margin-right: 8px;
+            text-shadow: none;
+        }}
+        .cat-code-cli {{
+            font-size: 8.5px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 1px;
+            border: 1px solid {t['border_dim']};
+            color: {t['text_dim']};
+            background-color: {t['bg_input']};
+            margin-right: 8px;
+            text-shadow: none;
+        }}
         .footer-lbl {{
             font-size: 9.5px;
             color: {t['text_dim']};
@@ -786,6 +838,9 @@ class DskyLauncher(Gtk.Window):
             
             self.filtered_apps.append(app)
         
+        # Always prioritize: 1. Custom Theme Apps -> 2. GUI Apps -> 3. Console/CLI Apps
+        self.filtered_apps.sort(key=lambda x: (x.get("tier", 1), x["name"].lower()))
+        
         self.selected_index = 0
         self.lbl_count.set_text(f"PROGRAMS: {len(self.filtered_apps):02d}")
         self.render_list()
@@ -802,9 +857,18 @@ class DskyLauncher(Gtk.Window):
             if idx == self.selected_index:
                 row_box.get_style_context().add_class("selected")
             
-            # Category Code Tag (e.g. [DEV], [SYS])
-            cat_tag = Gtk.Label(label=f"[{app['category'][:3].upper()}]")
-            cat_tag.get_style_context().add_class("cat-code")
+            # Category Code Tag with tier indicator
+            tier = app.get("tier", 1)
+            cat_code = app['category'][:3].upper()
+            if tier == 0:
+                cat_tag = Gtk.Label(label=f"★ [{cat_code}]")
+                cat_tag.get_style_context().add_class("cat-code-custom")
+            elif tier == 2:
+                cat_tag = Gtk.Label(label=f">_ [{cat_code}]")
+                cat_tag.get_style_context().add_class("cat-code-cli")
+            else:
+                cat_tag = Gtk.Label(label=f"[{cat_code}]")
+                cat_tag.get_style_context().add_class("cat-code")
             row_box.pack_start(cat_tag, False, False, 0)
             
             # App Info (Name & Clean Executable/Comment)

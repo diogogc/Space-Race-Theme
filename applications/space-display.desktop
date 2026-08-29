@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Multi-Monitor Display Console
+GenericName=Display Topology & Layout
+Comment=Configure multi-monitor arrangements, primary display, mirroring, and orientations
+Exec=space-display
+Icon=video-display
+Terminal=false
+Categories=Settings;HardwareSettings;Utility;
+Keywords=monitor;display;screen;mirror;extend;topology;hyprland;
