@@ -292,10 +292,8 @@ class SpaceSwitcherWindow(Gtk.Window):
             background-color: {self.pal['bg_card']};
             border: 1px solid {self.pal['border_color']};
             border-radius: {self.pal['radius']};
-            padding: 12px 14px;
+            padding: 10px 12px;
             min-width: 140px;
-            max-width: 180px;
-            min-height: 120px;
             transition: all 0.12s ease;
         }}
         .win-card:hover {{
@@ -339,10 +337,13 @@ class SpaceSwitcherWindow(Gtk.Window):
         }}
         """
         provider = Gtk.CssProvider()
-        provider.load_from_data(css.encode('utf-8'))
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+        try:
+            provider.load_from_data(css.encode('utf-8'))
+            Gtk.StyleContext.add_provider_for_screen(
+                Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        except Exception:
+            pass
 
     def build_ui(self):
         self.set_name("switcher-window")
@@ -374,6 +375,7 @@ class SpaceSwitcherWindow(Gtk.Window):
         for idx, win in enumerate(self.windows):
             card_eb = Gtk.EventBox()
             card_eb.get_style_context().add_class("win-card")
+            card_eb.set_size_request(150, 115)
             
             card_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             card_eb.add(card_vbox)
