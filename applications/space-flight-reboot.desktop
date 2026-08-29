@@ -8,3 +8,4 @@ Exec=kitty --class space-flight-reboot -e /home/diogo/.local/bin/space-flight-po
 Terminal=false
 Categories=Utility;System;
 StartupWMClass=space-flight-reboot
+NoDisplay=true
