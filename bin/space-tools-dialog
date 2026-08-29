@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Apollo Mission Control Operations & Tools Dialog
+Apollo Mission Control Operations & Tools Console
 Provides interactive tabbed GUI panel for:
   1) AV & Mission Capture (Screenshots, Screen Video Recording, Audio/Keystroke toggles, Media Access)
-  2) System Tools & Recovery (Btrfs Snapshots, Multi-Engine AI Recovery, Integrity Checks, Maintenance)
+  2) System Tools & Recovery (Btrfs Snapshots, Opt-In Autonomous Recovery, Multi-Engine AI Diagnostics)
+  3) Multi-Monitor Display Radar (Live topology, Extend, Mirror, Solo, Docked presets)
 Strict dark chassis & zero-white-background theme adherence across all 4 mission profiles.
 """
 import sys
@@ -26,6 +27,7 @@ REC_INFO_FILE = Path("/tmp/space-recording.info")
 CONFIG_FILE = Path(os.path.expanduser("~/.config/space-theme/recovery.conf"))
 LOG_DUMP = Path(os.path.expanduser("~/.cache/kernel-boot-failure-last.log"))
 VAULT_ALERT = Path(os.path.expanduser("~/sys-mem/sys_mem/troubleshooting/active-kernel-failure-alert.md"))
+MONITORS_CONF = Path(os.path.expanduser("~/.config/hypr/monitors.conf"))
 
 THEMES = {
     "nasa": {
@@ -128,6 +130,16 @@ def get_ai_engine():
             pass
     return "agy"
 
+def is_recovery_service_enabled():
+    try:
+        out = subprocess.check_output(
+            ["systemctl", "--user", "is-enabled", "kernel-fallback-collector.service"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        return (out == "enabled")
+    except Exception:
+        return False
+
 def is_recovery_alert_active():
     if VAULT_ALERT.exists():
         try:
@@ -138,6 +150,28 @@ def is_recovery_alert_active():
     if LOG_DUMP.exists():
         return True
     return False
+
+def query_monitors():
+    try:
+        out = subprocess.check_output(["hyprctl", "-j", "monitors"], text=True, stderr=subprocess.DEVNULL)
+        return json.loads(out)
+    except Exception:
+        return []
+
+def execute_hyprctl_monitor(rule_str):
+    try:
+        subprocess.run(["hyprctl", "keyword", "monitor", rule_str], check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"Hyprctl error: {e}", file=sys.stderr)
+        return False
+
+def save_monitors_config(rules):
+    MONITORS_CONF.parent.mkdir(parents=True, exist_ok=True)
+    content = "# Apollo Space Race - Persistent Monitor Topology\n"
+    for r in rules:
+        content += f"monitor = {r}\n"
+    MONITORS_CONF.write_text(content)
 
 def launch_in_terminal(cmd_str, title="Apollo Operations Console"):
     term = "ghostty" if shutil.which("ghostty") else "kitty"
@@ -162,17 +196,18 @@ class SpaceToolsDialog(Gtk.Window):
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_default_size(620, 560)
+        self.set_default_size(660, 580)
 
         self.theme_name = get_theme_name()
         self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
 
         # Navigation State
-        self.active_tab = initial_tab  # "capture" or "system"
+        self.active_tab = initial_tab  # "capture", "system", "display"
         self.current_view = initial_view  # "main", "rec"
         self.capture_selected_idx = 0
         self.rec_selected_idx = 0
         self.system_selected_idx = 0
+        self.display_selected_idx = 0
 
         # Recording configuration toggles
         self.rec_mode = "area"      # "area" or "full"
@@ -184,6 +219,7 @@ class SpaceToolsDialog(Gtk.Window):
         self.capture_buttons = []
         self.rec_ctrl_items = []
         self.system_buttons = []
+        self.display_buttons = []
 
         self.apply_css()
         self.build_ui()
@@ -191,6 +227,8 @@ class SpaceToolsDialog(Gtk.Window):
 
         if initial_tab == "system":
             self.switch_tab("system")
+        elif initial_tab in ["display", "monitors"]:
+            self.switch_tab("display")
         elif initial_view == "rec":
             self.switch_to_rec_view()
         else:
@@ -221,7 +259,7 @@ class SpaceToolsDialog(Gtk.Window):
             border: 1px solid {self.pal['btn_border']};
             border-bottom: none;
             border-radius: {self.pal['radius']} {self.pal['radius']} 0 0;
-            padding: 8px 16px;
+            padding: 8px 14px;
             transition: all 0.15s ease;
         }}
         .nav-tab.active {{
@@ -234,13 +272,28 @@ class SpaceToolsDialog(Gtk.Window):
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
             padding: 10px 14px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
+        }}
+        .radar-box {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px dashed {self.pal['accent']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+        }}
+        .monitor-chip {{
+            background-color: {self.pal['bg_card']};
+            border: 2px solid {self.pal['cyan']};
+            border-radius: {self.pal['radius']};
+            padding: 6px 10px;
+        }}
+        .monitor-chip.primary {{
+            border-color: {self.pal['accent']};
         }}
         .tool-row {{
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
-            padding: 8px 12px;
+            padding: 7px 12px;
             transition: all 0.15s ease;
         }}
         .tool-row.selected {{
@@ -307,8 +360,8 @@ class SpaceToolsDialog(Gtk.Window):
         header.pack_start(sub, False, False, 0)
         root_vbox.pack_start(header, False, False, 0)
 
-        # 2. Navigation Tab Bar
-        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # 2. Navigation Tab Bar (3 Tabs)
+        tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tab_bar.get_style_context().add_class("tab-bar")
 
         # Tab 1: Capture
@@ -327,6 +380,14 @@ class SpaceToolsDialog(Gtk.Window):
         self.tab_system.connect("button-press-event", lambda w, e: self.switch_tab("system"))
         tab_bar.pack_start(self.tab_system, False, False, 0)
 
+        # Tab 3: Multi-Monitor Display Radar
+        self.tab_display = Gtk.EventBox()
+        self.tab_display.get_style_context().add_class("nav-tab")
+        self.lbl_tab_display = Gtk.Label()
+        self.tab_display.add(self.lbl_tab_display)
+        self.tab_display.connect("button-press-event", lambda w, e: self.switch_tab("display"))
+        tab_bar.pack_start(self.tab_display, False, False, 0)
+
         root_vbox.pack_start(tab_bar, False, False, 0)
 
         # 3. Main Stack Container
@@ -339,6 +400,7 @@ class SpaceToolsDialog(Gtk.Window):
         self.build_capture_tab()
         self.build_rec_view()
         self.build_system_tab()
+        self.build_display_tab()
 
         # 4. Footer Hint
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -355,22 +417,33 @@ class SpaceToolsDialog(Gtk.Window):
         self.update_tab_headers()
 
     def update_tab_headers(self):
+        # Reset classes
+        self.tab_capture.get_style_context().remove_class("active")
+        self.tab_system.get_style_context().remove_class("active")
+        self.tab_display.get_style_context().remove_class("active")
+
         if self.active_tab == "capture":
             self.tab_capture.get_style_context().add_class("active")
-            self.tab_system.get_style_context().remove_class("active")
             self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📸 [C] AV &amp; CAPTURE</span>")
-            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] SYSTEM &amp; RECOVERY</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] RUN   [ ESC ] CLOSE</span>")
-        else:
-            self.tab_capture.get_style_context().remove_class("active")
+            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] RECOVERY</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / S / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+        elif self.active_tab == "system":
             self.tab_system.get_style_context().add_class("active")
             self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] AV &amp; CAPTURE</span>")
-            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛡️ [S] SYSTEM &amp; RECOVERY</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-7 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛡️ [S] RECOVERY</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+        elif self.active_tab == "display":
+            self.tab_display.get_style_context().add_class("active")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] AV &amp; CAPTURE</span>")
+            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] RECOVERY</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛰️ [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] APPLY   [ ESC ] CLOSE</span>")
 
     def build_capture_tab(self):
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        vbox.set_margin_top(12)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
+        vbox.set_margin_top(10)
         vbox.set_margin_bottom(8)
         vbox.set_margin_left(16)
         vbox.set_margin_right(16)
@@ -540,14 +613,14 @@ class SpaceToolsDialog(Gtk.Window):
         self.stack.add_named(rec_vbox, "rec")
 
     def build_system_tab(self):
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        vbox.set_margin_top(10)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_margin_top(8)
         vbox.set_margin_bottom(8)
         vbox.set_margin_left(16)
         vbox.set_margin_right(16)
 
         # 1. System Health Telemetry Summary Card
-        health_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        health_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         health_card.get_style_context().add_class("card-panel")
 
         self.lbl_health_telemetry = Gtk.Label()
@@ -555,7 +628,20 @@ class SpaceToolsDialog(Gtk.Window):
         health_card.pack_start(self.lbl_health_telemetry, False, False, 0)
         vbox.pack_start(health_card, False, False, 0)
 
-        # 2. System Tools & Actions List
+        # 2. Dynamic System Tools & Actions List
+        self.system_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.pack_start(self.system_container, True, True, 0)
+
+        self.populate_system_tool_rows()
+        self.stack.add_named(vbox, "system")
+
+    def populate_system_tool_rows(self):
+        for child in self.system_container.get_children():
+            self.system_container.remove(child)
+
+        recovery_enabled = is_recovery_service_enabled()
+        ai_engine = get_ai_engine()
+
         self.system_tool_items = [
             {
                 "key": "1",
@@ -566,40 +652,48 @@ class SpaceToolsDialog(Gtk.Window):
             {
                 "key": "2",
                 "title": "🤖 RUN AI SYSTEM DIAGNOSIS",
-                "sub": "Launch configured AI engine (AGY/Claude/Aider/Ollama) with log telemetry",
+                "sub": f"Launch configured AI engine ({ai_engine.upper()}) with log telemetry",
                 "action": "ai_diagnose"
-            },
-            {
+            }
+        ]
+
+        if recovery_enabled:
+            self.system_tool_items.extend([
+                {
+                    "key": "3",
+                    "title": "⚙️ CONFIGURE AI RECOVERY ENGINE",
+                    "sub": f"Select active engine (Current: {ai_engine}): agy, claude, aider, ollama, custom",
+                    "action": "ai_config"
+                },
+                {
+                    "key": "4",
+                    "title": "🧹 CLEAR RECOVERY FLAGS & DUMP",
+                    "sub": "Purge ~/.cache failure dump and resolve active warning flag in sys-mem",
+                    "action": "ai_clean"
+                }
+            ])
+        else:
+            self.system_tool_items.append({
                 "key": "3",
-                "title": "🛰️ MULTI-MONITOR AVIONICS RADAR",
-                "sub": "Configure display topology: extend right/left, mirror, solo, or docked mode",
-                "action": "display_radar"
-            },
+                "title": "🛡️ OPT-IN: ENABLE AUTONOMOUS AI BOOT RECOVERY",
+                "sub": "Enable systemd boot failure watcher & configure automatic AI recovery harness",
+                "action": "ai_opt_in"
+            })
+
+        self.system_tool_items.extend([
             {
-                "key": "4",
-                "title": "⚙️ CONFIGURE AI RECOVERY ENGINE",
-                "sub": "Select active AI service: agy, claude, aider, ollama, or custom harness",
-                "action": "ai_config"
-            },
-            {
-                "key": "5",
-                "title": "🧹 CLEAR RECOVERY FLAGS & DUMP",
-                "sub": "Purge ~/.cache failure dump and resolve active warning flag in sys-mem",
-                "action": "ai_clean"
-            },
-            {
-                "key": "6",
+                "key": str(len(self.system_tool_items) + 1),
                 "title": "🔄 REBUILD RAMDISKS (MKINITCPIO)",
                 "sub": "Regenerate all kernel initial ramdisk images (sudo mkinitcpio -P)",
                 "action": "rebuild_ramdisks"
             },
             {
-                "key": "7",
+                "key": str(len(self.system_tool_items) + 2),
                 "title": "🧹 CLEAN PACMAN CACHE & ORPHANS",
                 "sub": "Run paccache -r and purge unneeded orphaned dependencies safely",
                 "action": "clean_pkgs"
             }
-        ]
+        ])
 
         self.system_buttons = []
         for i, item in enumerate(self.system_tool_items):
@@ -628,20 +722,161 @@ class SpaceToolsDialog(Gtk.Window):
 
             btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_system_action(idx))
             self.system_buttons.append(btn)
-            vbox.pack_start(btn, False, False, 0)
+            self.system_container.pack_start(btn, False, False, 0)
 
-        self.stack.add_named(vbox, "system")
+        self.system_container.show_all()
+
+    def build_display_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        # 1. Topology Radar Box
+        radar_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        radar_panel.get_style_context().add_class("card-panel")
+
+        r_title = Gtk.Label()
+        r_title.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>📡 CONNECTED DISPLAY TOPOLOGY</span>")
+        r_title.set_xalign(0.0)
+        radar_panel.pack_start(r_title, False, False, 0)
+
+        self.topo_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.topo_box.get_style_context().add_class("radar-box")
+        radar_panel.pack_start(self.topo_box, False, False, 0)
+        vbox.pack_start(radar_panel, False, False, 0)
+
+        self.render_topology_chips()
+
+        # 2. Display Presets
+        presets_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        presets_panel.get_style_context().add_class("card-panel")
+
+        p_title = Gtk.Label()
+        p_title.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>🚀 QUICK TOPOLOGY PRESETS</span>")
+        p_title.set_xalign(0.0)
+        presets_panel.pack_start(p_title, False, False, 0)
+
+        self.display_presets = [
+            {
+                "key": "1",
+                "title": "🖥️ EXTEND RIGHT (Workstation Default)",
+                "sub": "Place external monitor to the right of primary display",
+                "action": "extend_right"
+            },
+            {
+                "key": "2",
+                "title": "🖥️ EXTEND LEFT",
+                "sub": "Place external monitor to the left of primary display",
+                "action": "extend_left"
+            },
+            {
+                "key": "3",
+                "title": "🪞 MIRROR / PRESENTATION MODE",
+                "sub": "Clone primary display output to external projector/screen",
+                "action": "mirror"
+            },
+            {
+                "key": "4",
+                "title": "💻 PRIMARY ONLY (Battery Saver)",
+                "sub": "Disable secondary/external video outputs",
+                "action": "primary_only"
+            },
+            {
+                "key": "5",
+                "title": "📺 DOCKED DESKTOP (Clamshell Mode)",
+                "sub": "Disable internal laptop screen, use external monitor exclusively",
+                "action": "docked"
+            },
+            {
+                "key": "6",
+                "title": "🔄 AUTO DETECT & RESET",
+                "sub": "Reset all monitors to preferred auto topology (,preferred,auto,1)",
+                "action": "auto"
+            }
+        ]
+
+        self.display_buttons = []
+        for i, item in enumerate(self.display_presets):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn.add(row_box)
+
+            badge = Gtk.Label()
+            badge.set_markup(f"<span font_weight='bold' font_size='10000' foreground='{self.pal['accent']}'>[{item['key']}]</span>")
+            row_box.pack_start(badge, False, False, 0)
+
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>{item['title']}</span>")
+            t_lbl.set_xalign(0.0)
+            text_vbox.pack_start(t_lbl, False, False, 0)
+
+            s_lbl = Gtk.Label()
+            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
+            s_lbl.set_xalign(0.0)
+            text_vbox.pack_start(s_lbl, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_display_action(idx))
+            self.display_buttons.append(btn)
+            presets_panel.pack_start(btn, False, False, 0)
+
+        vbox.pack_start(presets_panel, True, True, 0)
+        self.stack.add_named(vbox, "display")
+
+    def render_topology_chips(self):
+        for child in self.topo_box.get_children():
+            self.topo_box.remove(child)
+
+        mons = query_monitors()
+        if not mons:
+            lbl = Gtk.Label()
+            lbl.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>No active displays detected via Hyprland IPC.</span>")
+            self.topo_box.pack_start(lbl, True, True, 0)
+            self.topo_box.show_all()
+            return
+
+        for m in mons:
+            chip = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            chip.get_style_context().add_class("monitor-chip")
+            if m.get("focused") or m.get("id") == 0:
+                chip.get_style_context().add_class("primary")
+
+            m_name = m.get("name", "Unknown")
+            m_res = f"{m.get('width', 0)}x{m.get('height', 0)}@{int(m.get('refreshRate', 60))}Hz"
+            m_pos = f"Pos: ({m.get('x', 0)}, {m.get('y', 0)})"
+            m_scale = f"Scale: {m.get('scale', 1.0)}x"
+            m_ws = f"WS: {m.get('activeWorkspace', {}).get('name', '1')}"
+
+            l_name = Gtk.Label()
+            l_name.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>🖥️ {m_name}</span>")
+            l_name.set_xalign(0.0)
+            chip.pack_start(l_name, False, False, 0)
+
+            l_meta = Gtk.Label()
+            l_meta.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>{m_res} ({m_scale})\n{m_pos} | {m_ws}</span>")
+            l_meta.set_xalign(0.0)
+            chip.pack_start(l_meta, False, False, 0)
+
+            self.topo_box.pack_start(chip, True, True, 0)
+
+        self.topo_box.show_all()
 
     def refresh_system_telemetry(self):
-        # 1. Active AI Engine & Alert Status
         ai_engine = get_ai_engine().upper()
-        alert_active = is_recovery_alert_active()
-        alert_badge = f"<span foreground='{self.pal['red']}' font_weight='bold'>⚠️ ALERT ACTIVE (Crash Log Cached)</span>" if alert_active else f"<span foreground='{self.pal['green']}' font_weight='bold'>✅ NOMINAL (Clean)</span>"
+        recovery_enabled = is_recovery_service_enabled()
+        service_badge = f"<span foreground='{self.pal['green']}'>[ ARMED &amp; ACTIVE ]</span>" if recovery_enabled else f"<span foreground='{self.pal['text_dim']}'>[ OPTED-OUT ]</span>"
 
-        # 2. Kernel & System info
+        alert_active = is_recovery_alert_active()
+        alert_badge = f"<span foreground='{self.pal['red']}' font_weight='bold'>⚠️ ALERT ACTIVE (Dump Cached)</span>" if alert_active else f"<span foreground='{self.pal['green']}'>✅ NOMINAL (Clean)</span>"
+
         current_kernel = os.uname().release
         
-        # 3. Failed units count
         try:
             out = subprocess.check_output(["systemctl", "--failed", "--no-legend", "--plain"], text=True, stderr=subprocess.DEVNULL)
             failed_count = len([line for line in out.splitlines() if line.strip()])
@@ -649,7 +884,6 @@ class SpaceToolsDialog(Gtk.Window):
             failed_count = 0
         failed_badge = f"<span foreground='{self.pal['green']}'>0 Failed</span>" if failed_count == 0 else f"<span foreground='{self.pal['red']}'>{failed_count} Failed</span>"
 
-        # 4. Boot partition space
         boot_space = "N/A"
         try:
             st = os.statvfs("/boot")
@@ -663,7 +897,7 @@ class SpaceToolsDialog(Gtk.Window):
         markup = (
             f"<span font_weight='bold' foreground='{self.pal['text_main']}'>🛡️ SYSTEM INTEGRITY &amp; RECOVERY TELEMETRY</span>\n"
             f"<span font_size='8500' foreground='{self.pal['text_sub']}'>"
-            f"• <b>AI Harness:</b> <span foreground='{self.pal['cyan']}'>{ai_engine}</span>  |  <b>Recovery Status:</b> {alert_badge}\n"
+            f"• <b>AI Harness:</b> <span foreground='{self.pal['cyan']}'>{ai_engine}</span>  |  <b>Service:</b> {service_badge}  |  <b>Status:</b> {alert_badge}\n"
             f"• <b>Active Kernel:</b> {current_kernel}  |  <b>Units:</b> {failed_badge}  |  <b>/boot:</b> {boot_space}"
             f"</span>"
         )
@@ -685,10 +919,20 @@ class SpaceToolsDialog(Gtk.Window):
                     ctx.remove_class("active-rec")
 
     def refresh_system_ui(self):
+        self.populate_system_tool_rows()
         self.refresh_system_telemetry()
         for i, btn in enumerate(self.system_buttons):
             ctx = btn.get_style_context()
             if i == self.system_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def refresh_display_ui(self):
+        self.render_topology_chips()
+        for i, btn in enumerate(self.display_buttons):
+            ctx = btn.get_style_context()
+            if i == self.display_selected_idx:
                 ctx.add_class("selected")
             else:
                 ctx.remove_class("selected")
@@ -740,6 +984,9 @@ class SpaceToolsDialog(Gtk.Window):
         elif tab_name == "system":
             self.refresh_system_ui()
             self.stack.set_visible_child_name("system")
+        elif tab_name == "display":
+            self.refresh_display_ui()
+            self.stack.set_visible_child_name("display")
 
     def switch_to_rec_view(self):
         self.active_tab = "capture"
@@ -827,15 +1074,18 @@ class SpaceToolsDialog(Gtk.Window):
             cleanup()
             launch_in_terminal("space-ai-recovery", title="Apollo AI Diagnostic Harness")
             Gtk.main_quit()
-        elif action == "display_radar":
-            self.hide()
-            cleanup()
-            subprocess.Popen(["space-display"], start_new_session=True)
-            Gtk.main_quit()
         elif action == "ai_config":
             self.hide()
             cleanup()
             launch_in_terminal("space-ai-recovery --config", title="Apollo AI Engine Configurator")
+            Gtk.main_quit()
+        elif action == "ai_opt_in":
+            self.hide()
+            cleanup()
+            launch_in_terminal(
+                "echo '==> Enabling Apollo Autonomous Recovery Subsystem...'; systemctl --user daemon-reload && systemctl --user enable kernel-fallback-collector.service && space-ai-recovery --config && notify-send -a 'Apollo Ops' '🛡️ Recovery Enabled' 'Autonomous boot watcher armed.'",
+                title="Apollo Recovery Enablement"
+            )
             Gtk.main_quit()
         elif action == "ai_clean":
             subprocess.run(["space-ai-recovery", "--clean"], capture_output=True)
@@ -853,6 +1103,65 @@ class SpaceToolsDialog(Gtk.Window):
             launch_in_terminal("echo '==> Cleaning Pacman cache and unneeded orphans...'; sudo paccache -r; sudo pacman -Rns $(pacman -Qdtq) 2>/dev/null || echo 'No orphans found.'; echo '✅ Package maintenance complete!'", title="Package & Cache Maintenance")
             Gtk.main_quit()
 
+    def trigger_display_action(self, idx):
+        item = self.display_presets[idx]
+        action = item["action"]
+        mons = query_monitors()
+
+        if action == "auto":
+            execute_hyprctl_monitor(",preferred,auto,1")
+            save_monitors_config([",preferred,auto,1"])
+        elif len(mons) < 2:
+            execute_hyprctl_monitor(",preferred,auto,1")
+            save_monitors_config([",preferred,auto,1"])
+            if action != "auto" and shutil.which("notify-send"):
+                subprocess.Popen(["notify-send", "-a", "Apollo Display", "ℹ️ Single Display Active", f"Applied auto layout for {mons[0].get('name', 'display')}."], start_new_session=True)
+        else:
+            primary = mons[0]
+            secondary = mons[1]
+            p_name = primary.get("name")
+            s_name = secondary.get("name")
+            p_w = primary.get("width", 1920)
+            s_w = secondary.get("width", 1920)
+
+            if action == "extend_right":
+                r1 = f"{p_name},preferred,0x0,1"
+                r2 = f"{s_name},preferred,{p_w}x0,1"
+                execute_hyprctl_monitor(r1)
+                execute_hyprctl_monitor(r2)
+                save_monitors_config([r1, r2])
+            elif action == "extend_left":
+                r1 = f"{s_name},preferred,0x0,1"
+                r2 = f"{p_name},preferred,{s_w}x0,1"
+                execute_hyprctl_monitor(r1)
+                execute_hyprctl_monitor(r2)
+                save_monitors_config([r1, r2])
+            elif action == "mirror":
+                r1 = f"{p_name},preferred,0x0,1"
+                r2 = f"{s_name},preferred,0x0,1,mirror,{p_name}"
+                execute_hyprctl_monitor(r1)
+                execute_hyprctl_monitor(r2)
+                save_monitors_config([r1, r2])
+            elif action == "primary_only":
+                r1 = f"{p_name},preferred,0x0,1"
+                r2 = f"{s_name},disable"
+                execute_hyprctl_monitor(r1)
+                execute_hyprctl_monitor(r2)
+                save_monitors_config([r1, r2])
+            elif action == "docked":
+                r1 = f"{p_name},disable"
+                r2 = f"{s_name},preferred,0x0,1"
+                execute_hyprctl_monitor(r1)
+                execute_hyprctl_monitor(r2)
+                save_monitors_config([r1, r2])
+
+        if shutil.which("hyprpaper"):
+            subprocess.Popen(["killall", "-SIGUSR2", "hyprpaper"], stderr=subprocess.DEVNULL)
+        
+        self.render_topology_chips()
+        if shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", "-a", "Apollo Display", "🖥️ Display Layout Applied", f"Topology preset: {item['title']}"], start_new_session=True)
+
     def on_key_press(self, widget, event):
         keyname = Gdk.keyval_name(event.keyval)
 
@@ -865,12 +1174,15 @@ class SpaceToolsDialog(Gtk.Window):
             Gtk.main_quit()
             return True
 
-        # Tab Switching
+        # Direct Tab Switching Hotkeys
         if keyname in ["c", "C"] and self.current_view != "rec":
             self.switch_tab("capture")
             return True
         if keyname in ["s", "S"] and self.current_view != "rec":
             self.switch_tab("system")
+            return True
+        if keyname in ["d", "D", "m", "M"] and self.current_view != "rec":
+            self.switch_tab("display")
             return True
 
         # Capture Tab Navigation
@@ -883,8 +1195,11 @@ class SpaceToolsDialog(Gtk.Window):
                 self.capture_selected_idx = (self.capture_selected_idx - 1 + len(self.capture_tool_items)) % len(self.capture_tool_items)
                 self.refresh_capture_ui()
                 return True
-            if keyname in ["Tab", "ISO_Left_Tab"]:
+            if keyname in ["Tab"]:
                 self.switch_tab("system")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("display")
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
                 self.trigger_capture_action(self.capture_selected_idx)
@@ -906,7 +1221,10 @@ class SpaceToolsDialog(Gtk.Window):
                 self.system_selected_idx = (self.system_selected_idx - 1 + len(self.system_tool_items)) % len(self.system_tool_items)
                 self.refresh_system_ui()
                 return True
-            if keyname in ["Tab", "ISO_Left_Tab"]:
+            if keyname in ["Tab"]:
+                self.switch_tab("display")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
                 self.switch_tab("capture")
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
@@ -916,6 +1234,35 @@ class SpaceToolsDialog(Gtk.Window):
                 idx = int(keyname) - 1
                 if 0 <= idx < len(self.system_tool_items):
                     self.trigger_system_action(idx)
+                    return True
+            return False
+
+        # Display Radar Tab Navigation
+        elif self.active_tab == "display" and self.current_view == "main":
+            if keyname in ["Down", "j", "J"]:
+                self.display_selected_idx = (self.display_selected_idx + 1) % len(self.display_presets)
+                self.refresh_display_ui()
+                return True
+            if keyname in ["Up", "k", "K"]:
+                self.display_selected_idx = (self.display_selected_idx - 1 + len(self.display_presets)) % len(self.display_presets)
+                self.refresh_display_ui()
+                return True
+            if keyname in ["Tab"]:
+                self.switch_tab("capture")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("system")
+                return True
+            if keyname in ["r", "R"]:
+                self.render_topology_chips()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.trigger_display_action(self.display_selected_idx)
+                return True
+            if keyname in ["1", "2", "3", "4", "5", "6"]:
+                idx = int(keyname) - 1
+                if 0 <= idx < len(self.display_presets):
+                    self.trigger_display_action(idx)
                     return True
             return False
 
@@ -1005,8 +1352,17 @@ def cleanup():
 
 def main():
     check_singleton()
-    init_tab = "system" if (len(sys.argv) > 1 and sys.argv[1] in ["system", "recovery", "health"]) else "capture"
-    init_view = "rec" if (len(sys.argv) > 1 and sys.argv[1] in ["rec", "record"]) else "main"
+    init_tab = "capture"
+    init_view = "main"
+
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in ["system", "recovery", "health"]:
+            init_tab = "system"
+        elif arg in ["display", "monitors", "radar"]:
+            init_tab = "display"
+        elif arg in ["rec", "record"]:
+            init_view = "rec"
 
     win = SpaceToolsDialog(initial_tab=init_tab, initial_view=init_view)
     win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
