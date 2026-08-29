@@ -367,13 +367,22 @@ def get_status_json():
 def get_tools_status_json():
     """Waybar TOOL module JSON status and tooltip."""
     tooltip = (
-        "🛠️ APOLLO MISSION TOOLS &amp; CAPTURE CONSOLE\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "• Click       : Open Tools &amp; Capture Panel\n"
-        "• Right-Click : Quick Area Screenshot (PrtScn)\n"
-        "• PrtScn      : Area Screenshot (Select &amp; Copy)\n"
-        "• Ctrl+PrtScn : Fullscreen Screenshot (Copy)\n"
-        "• Shift+PrtScn: Screen Video Recorder"
+        "🛠️ APOLLO MISSION OPERATIONS &amp; TOOLS CONSOLE\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "● [TAB 1] 📸 AV &amp; MISSION CAPTURE:\n"
+        "  • Click        : Open Full Operations Console (Super+Shift+P)\n"
+        "  • Right-Click  : Quick Area Screenshot (PrtScn)\n"
+        "  • Ctrl+PrtScn  : Fullscreen Screenshot (Auto-Copy)\n"
+        "  • Shift+PrtScn : Screen Video Recorder (Audio/Mic/Keys)\n"
+        "\n"
+        "● [TAB 2] 🛡️ SYSTEM &amp; RECOVERY:\n"
+        "  • Instant Btrfs Recovery Snapshot\n"
+        "  • AI Diagnostics &amp; Autonomous Repair (AGY / Claude / Ollama)\n"
+        "  • Ramdisk Generation &amp; Cache Maintenance\n"
+        "\n"
+        "● [TAB 3] 🛰️ MULTI-MONITOR RADAR:\n"
+        "  • Display Radar &amp; Topology (Super+Shift+R)\n"
+        "  • 1-Click Presets: Extend Right/Left, Mirror, Solo, Docked"
     )
     return json.dumps({
         "text": "TOOL",
