@@ -332,6 +332,14 @@ hl.bind("ALT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-swi
 hl.bind("ALT + SHIFT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher prev"))
 hl.bind(mainMod .. " + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher next"))
 hl.bind(mainMod .. " + SHIFT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher prev"))
+if hl.bindr then
+    pcall(function()
+        hl.bindr("ALT + Alt_L", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
+        hl.bindr("ALT + Alt_R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
+        hl.bindr(mainMod .. " + Super_L", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
+        hl.bindr(mainMod .. " + Super_R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
+    end)
+end
 
 -- Move focus with mainMod + arrow keys
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))

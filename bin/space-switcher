@@ -531,11 +531,20 @@ class SpaceSwitcherWindow(Gtk.Window):
     def on_key_release(self, widget, event):
         keyval = event.keyval
         keyname = Gdk.keyval_name(keyval)
+        state = event.state
         
-        # When Alt key (or Super key) is released, activate selected window
+        # 1. Direct Alt or Super keycode released
         if keyname in ["Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R"]:
             self.activate_and_close()
             return True
+            
+        # 2. Any key released when Alt or Super modifier is no longer held
+        has_alt = bool(state & Gdk.ModifierType.MOD1_MASK)
+        has_super = bool(state & Gdk.ModifierType.MOD4_MASK)
+        if not has_alt and not has_super:
+            self.activate_and_close()
+            return True
+            
         return False
 
     def run_ipc_server(self):
