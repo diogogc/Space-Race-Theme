@@ -318,6 +318,12 @@ hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("command -v hyprlock >/dev/null 2>&1 
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))    -- dwindle only
 
+-- Screenshot & Screen Recording Keybindings
+hl.bind("Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-capture area"))
+hl.bind("CTRL + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-capture full"))
+hl.bind("SHIFT + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-tools-dialog rec"))
+hl.bind(mainMod .. " + SHIFT + P", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-tools-dialog"))
+
 -- Move focus with mainMod + arrow keys
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
 hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
@@ -413,6 +419,15 @@ hl.window_rule({
 hl.window_rule({
     name  = "space-power-menu-float",
     match = { class = "space-power-menu" },
+    float = true,
+    center = true,
+    pin   = true,
+})
+
+-- Space Mission Control Tools & Capture Dialog
+hl.window_rule({
+    name  = "space-tools-dialog-float",
+    match = { class = "space-tools-dialog" },
     float = true,
     center = true,
     pin   = true,

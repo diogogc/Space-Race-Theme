@@ -26,6 +26,27 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 
 SECTIONS = {
+    "tmux": {
+        "title": "📟 TMUX MULTIPLEXER (PREFIX: Ctrl + B)",
+        "color": BRIGHT_AMBER,
+        "items": [
+            ("Ctrl + B then c", "Create new window (inherits current path)"),
+            ("Ctrl + B then |", "Split window vertically (side-by-side)"),
+            ("Ctrl + B then -", "Split window horizontally (top/bottom)"),
+            ("Ctrl + B then h/j/k/l", "Navigate pane left / down / up / right"),
+            ("Ctrl + B then H/J/K/L", "Resize active pane by 5 cells (Vim keys)"),
+            ("Ctrl + B then [1 - 9]", "Switch directly to window 1 through 9"),
+            ("Ctrl + B then [", "Enter vi copy / scrollback buffer mode"),
+            ("v / y (in copy mode)", "Visual select / copy to Wayland clipboard (wl-copy)"),
+            ("Mouse Drag", "Select and copy text directly to clipboard"),
+            ("Ctrl + B then z", "Toggle zoom active pane (maximize / restore)"),
+            ("Ctrl + B then x", "Close / terminate current pane"),
+            ("Ctrl + B then d", "Detach session (keeps tasks in background)"),
+            ("Ctrl + B then r", "Reload tmux configuration immediately"),
+            ("Ctrl + B then s", "Interactive session list & switcher"),
+            ("tm / tma / tml / tmn", "CLI shortcuts (launch, attach, list, new)"),
+        ]
+    },
     "zsh": {
         "title": "🐚 ZSH & LINE EDITOR KEYBINDINGS",
         "color": GREEN,
@@ -124,7 +145,7 @@ def print_banner():
    ╔═══════════════════════════════════════════════════════════════════════════╗
    ║  🛸 SPACE RACE MISSION CONTROL // FLIGHT MANUAL & CHEATSHEET             ║
    ╚═══════════════════════════════════════════════════════════════════════════╝{RESET}
-   {MUTED}Usage: {WHITE}cheatsheet {MUTED}[zsh | tree | space | hypr | sys | all]{RESET}
+   {MUTED}Usage: {WHITE}cheatsheet {MUTED}[tmux | zsh | tree | space | hypr | sys | all]{RESET}
 """
     print(banner)
 

@@ -24,7 +24,10 @@ gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gdk
 
 KEYBINDINGS = [
-    # Top Priority - Space Mission Telemetry & Flight Consoles
+    {"keys": "PrtScn",            "desc": "Area Screenshot (Select & Copy) → ~/Pictures/prints", "category": "CAPTURE", "cmd": "space-capture area"},
+    {"keys": "Ctrl + PrtScn",     "desc": "Fullscreen Screenshot (Capture Display & Copy)",      "category": "CAPTURE", "cmd": "space-capture full"},
+    {"keys": "Shift + PrtScn",    "desc": "Screen Video Recorder (Audio & Keystroke Toggles)",   "category": "CAPTURE", "cmd": "space-tools-dialog rec"},
+    {"keys": "SUPER + SHIFT + P", "desc": "Mission Capture & Tools Console",                    "category": "TOOLS",   "cmd": "space-tools-dialog"},
     {"keys": "SUPER + SPACE",     "desc": "Launch Application (Apollo DSKY AGC)",       "category": "LAUNCHER", "cmd": "dsky-launcher"},
     {"keys": "SUPER + SHIFT + T", "desc": "Cycle Mission Theme (NASA / CRT / Kosmos)", "category": "THEME",    "cmd": "space-theme-switch next"},
     {"keys": "SUPER + SHIFT + K", "desc": "Keybinding Guide & Flight Cheatsheet",      "category": "GUIDE",    "cmd": "space-keybinds"},
@@ -54,6 +57,18 @@ KEYBINDINGS = [
     {"keys": "SUPER + SHIFT + S", "desc": "Move Active Window to Scratchpad",          "category": "WORKSPACE","cmd": "hyprctl dispatch movetoworkspace special:magic"},
     {"keys": "SUPER + Arrow Keys","desc": "Move Focus (Left / Right / Up / Down)",      "category": "NAV",      "cmd": None},
     {"keys": "SUPER + Mouse Drag","desc": "Move (LMB) / Resize (RMB) Floating Window", "category": "NAV",      "cmd": None},
+
+    # Tmux Multiplexer Controls (Prefix: Ctrl + B)
+    {"keys": "Ctrl + B then c",   "desc": "Create New Tmux Window (in current path)",  "category": "TMUX",     "cmd": None},
+    {"keys": "Ctrl + B then |",   "desc": "Split Window Vertically (Side-by-Side)",     "category": "TMUX",     "cmd": None},
+    {"keys": "Ctrl + B then -",   "desc": "Split Window Horizontally (Top/Bottom)",    "category": "TMUX",     "cmd": None},
+    {"keys": "Ctrl + B then h/j/k/l", "desc": "Navigate Pane Left / Down / Up / Right", "category": "TMUX",   "cmd": None},
+    {"keys": "Ctrl + B then H/J/K/L", "desc": "Resize Active Pane (5 Cells, Vim keys)", "category": "TMUX",   "cmd": None},
+    {"keys": "Ctrl + B then [1 - 9]", "desc": "Select Tmux Window 1 through 9",        "category": "TMUX",     "cmd": None},
+    {"keys": "Ctrl + B then [",   "desc": "Enter Vi Copy / Scrollback Mode",           "category": "TMUX",     "cmd": None},
+    {"keys": "Ctrl + B then z",   "desc": "Toggle Pane Zoom (Maximize / Restore)",     "category": "TMUX",     "cmd": None},
+    {"keys": "Ctrl + B then d",   "desc": "Detach Session (Leaves Jobs in Background)", "category": "TMUX",    "cmd": None},
+    {"keys": "Ctrl + B then r",   "desc": "Reload Tmux Configuration File",             "category": "TMUX",     "cmd": None},
 
     # Hardware & Audio Keys
     {"keys": "XF86AudioRaiseVolume", "desc": "Master Audio Volume +5%",                 "category": "HARDWARE", "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"},

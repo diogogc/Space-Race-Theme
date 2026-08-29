@@ -9,7 +9,6 @@
     "margin-right": 8,
     
     "modules-left": [
-        "custom/theme",
         "hyprland/workspaces",
         "hyprland/window"
     ],
@@ -17,6 +16,8 @@
         "custom/telemetry"
     ],
     "modules-right": [
+        "custom/recording",
+        "custom/tools",
         "custom/iss",
         "custom/met",
         "pulseaudio",
@@ -26,16 +27,23 @@
         // "tray" // Uncomment to restore default systray applet icons (e.g. nm-applet, blueman)
     ],
 
-
-
-    "custom/theme": {
+    "custom/tools": {
         "format": "{}",
-        "exec": "$HOME/.local/bin/space-theme-status",
+        "exec": "$HOME/.local/bin/space-capture tools-status",
         "return-type": "json",
         "interval": 2,
-        "on-click": "$HOME/.local/bin/space-theme-switch next",
-        "on-click-right": "$HOME/.local/bin/space-theme-switch prev",
-        "tooltip": true
+        "tooltip": true,
+        "on-click": "$HOME/.local/bin/space-tools-dialog",
+        "on-click-right": "$HOME/.local/bin/space-capture area"
+    },
+
+    "custom/recording": {
+        "format": "{}",
+        "exec": "$HOME/.local/bin/space-capture status",
+        "return-type": "json",
+        "interval": 1,
+        "tooltip": true,
+        "on-click": "$HOME/.local/bin/space-capture stop"
     },
 
     "custom/iss": {
@@ -110,8 +118,6 @@
         "on-click": "$HOME/.local/bin/space-energy-dialog",
         "on-click-right": "$HOME/.local/bin/space-energy-dialog"
     },
-
-
 
     "clock": {
         "format": "{:%H:%M:%S LOC}",

@@ -24,6 +24,9 @@ window#waybar {
     font-weight: bold;
 }
 
+
+
+
 #custom-telemetry, #custom-met {
     background-color: @bg_card;
     color: @fg_primary;
@@ -90,4 +93,23 @@ tooltip {
 tooltip label {
     color: @fg_primary;
     text-shadow: 0 0 4px rgba(255, 158, 0, 0.5);
+}
+
+#custom-tools {
+    background-color: @bg_card;
+    border: 1px solid @border_color;
+    color: @fg_primary;
+    font-weight: bold;
+}
+
+#custom-tools:hover {
+    background-color: @amber_glow;
+    color: #0b0c0e;
+}
+
+#custom-recording {
+    background-color: @bg_card;
+    color: #ff3300;
+    border: 1px solid #ff3300;
+    font-weight: bold;
 }

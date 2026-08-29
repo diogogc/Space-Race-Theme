@@ -1,0 +1,706 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Capture & Mission Tools Dialog
+Provides interactive GUI panel for Area/Fullscreen Screenshots,
+Screen Video Recording with audio & keystroke toggles,
+and quick media storage access.
+Strictly dark chassis & zero-white-background theme adherence.
+"""
+import sys
+import os
+import subprocess
+import signal
+import time
+import json
+from pathlib import Path
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+
+PID_FILE = f"/tmp/space-tools-dialog-{os.getuid()}.pid"
+REC_PID_FILE = Path("/tmp/space-recording.pid")
+REC_INFO_FILE = Path("/tmp/space-recording.info")
+
+THEMES = {
+    "nasa": {
+        "bg": "#14171d",
+        "bg_card": "#1c222b",
+        "border": "#ffb000",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#8c9ba5",
+        "btn_bg": "#10141a",
+        "btn_border": "#2e3846",
+        "btn_hover": "#263040",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "red": "#ff3333",
+        "cyan": "#00d2ff",
+        "radius": "4px",
+    },
+    "crt-amber": {
+        "bg": "#0e1014",
+        "bg_card": "#161920",
+        "border": "#ff9e00",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#734900",
+        "btn_bg": "#08090c",
+        "btn_border": "#402800",
+        "btn_hover": "#241908",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "red": "#ff5533",
+        "cyan": "#ffbb33",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#0a100a",
+        "bg_card": "#0f1c0f",
+        "border": "#33ff33",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#050a05",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#102610",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "red": "#ff4444",
+        "cyan": "#55ff55",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#0e1e1a",
+        "bg_card": "#152d27",
+        "border": "#48e5c2",
+        "text_main": "#48e5c2",
+        "text_sub": "#36b89c",
+        "text_dim": "#226b5c",
+        "btn_bg": "#081411",
+        "btn_border": "#1f6656",
+        "btn_hover": "#173830",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "red": "#ff4860",
+        "cyan": "#48e5c2",
+        "radius": "3px",
+    }
+}
+
+def get_theme_name():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                t = f.read().strip()
+                if t in THEMES:
+                    return t
+        except Exception:
+            pass
+    return "nasa"
+
+def is_recording_active():
+    if REC_PID_FILE.exists():
+        try:
+            pid = int(REC_PID_FILE.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            pass
+    return False
+
+class SpaceToolsDialog(Gtk.Window):
+    def __init__(self, initial_view="main"):
+        super().__init__(title="Apollo Mission Control Capture & Tools")
+        self.set_wmclass("space-tools-dialog", "space-tools-dialog")
+        self.set_role("dialog")
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_default_size(560, 500)
+
+        self.theme_name = get_theme_name()
+        self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+
+        # State
+        self.current_view = initial_view
+        self.selected_idx = 0
+        self.main_buttons = []
+        self.rec_buttons = []
+
+        # Recording configuration toggles
+        self.rec_mode = "area"      # "area" or "full"
+        self.rec_sys_audio = True   # Desktop sounds default ON
+        self.rec_mic_audio = False  # Mic default OFF
+        self.rec_keystrokes = False # Keystrokes strictly default OFF (opt-in per session)
+
+        self.apply_css()
+        self.build_ui()
+        self.connect("key-press-event", self.on_key_press)
+
+        if initial_view == "rec":
+            self.switch_to_rec_view()
+        else:
+            self.switch_to_main_view()
+
+    def apply_css(self):
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', monospace;
+        }}
+        window {{
+            background-color: {self.pal['bg']};
+            border: 2px solid {self.pal['border']};
+            border-radius: {self.pal['radius']};
+        }}
+        .header-box {{
+            background-color: {self.pal['bg_card']};
+            border-bottom: 2px solid {self.pal['border']};
+            padding: 12px 18px;
+        }}
+        .tool-row {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 14px;
+            transition: all 0.15s ease;
+        }}
+        .tool-row.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .tool-row.active-rec {{
+            border: 1.5px solid {self.pal['red']};
+        }}
+        .tool-row.active-rec.selected {{
+            background-color: #381414;
+            border: 1.5px solid {self.pal['red']};
+        }}
+        .config-card {{
+            background-color: {self.pal['bg_card']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 14px 16px;
+        }}
+        .toggle-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 8px 12px;
+            transition: all 0.15s ease;
+        }}
+        .toggle-btn.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .action-btn {{
+            background-color: {self.pal['btn_bg']};
+            border: 1px solid {self.pal['btn_border']};
+            border-radius: {self.pal['radius']};
+            padding: 10px 16px;
+            transition: all 0.15s ease;
+        }}
+        .action-btn.selected {{
+            background-color: {self.pal['btn_hover']};
+            border: 1px solid {self.pal['accent']};
+        }}
+        .action-btn.engage.selected {{
+            background-color: #143520;
+            border: 1px solid {self.pal['green']};
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self):
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(120)
+        self.add(self.stack)
+
+        self.build_main_view()
+        self.build_rec_view()
+
+    def build_main_view(self):
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Header
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11500' foreground='{self.pal['text_main']}'>🛠️ APOLLO MISSION CONTROL // CAPTURE &amp; TOOLS</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        utc_str = time.strftime('%H:%M:%S UTC', time.gmtime())
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8500' foreground='{self.pal['green']}'>[ STATUS: NOMINAL ]</span> <span font_size='8500' foreground='{self.pal['text_dim']}'>| UTC: {utc_str} | PROFILE: {self.theme_name.upper()}</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        main_vbox.pack_start(header, False, False, 0)
+
+        # Main tools list
+        tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        tools_box.set_margin_top(14)
+        tools_box.set_margin_bottom(14)
+        tools_box.set_margin_left(18)
+        tools_box.set_margin_right(18)
+
+        self.tool_items = [
+            {
+                "key": "1",
+                "title": "📸 AREA SCREENSHOT",
+                "sub": "Select custom desktop rectangle (PrtScn) → ~/Pictures/prints",
+                "action": "area_shot"
+            },
+            {
+                "key": "2",
+                "title": "🖥️ FULLSCREEN SCREENSHOT",
+                "sub": "Capture entire display (Ctrl + PrtScn) → ~/Pictures/prints",
+                "action": "full_shot"
+            },
+            {
+                "key": "3",
+                "title": "🎥 SCREEN VIDEO RECORDER",
+                "sub": "Record video with audio/mic & keystroke toggles (Shift + PrtScn)",
+                "action": "rec_menu"
+            },
+            {
+                "key": "4",
+                "title": "📁 OPEN PRINTS FOLDER",
+                "sub": "View captured screenshots in ~/Pictures/prints",
+                "action": "open_prints"
+            },
+            {
+                "key": "5",
+                "title": "📁 OPEN VIDEOS FOLDER",
+                "sub": "View recorded screen videos in ~/Videos",
+                "action": "open_videos"
+            }
+        ]
+
+        self.main_buttons = []
+        for i, item in enumerate(self.tool_items):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            btn.add(row_box)
+
+            badge = Gtk.Label()
+            badge.set_markup(f"<span font_weight='bold' font_size='10500' foreground='{self.pal['accent']}'>[{item['key']}]</span>")
+            row_box.pack_start(badge, False, False, 0)
+
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='10000' foreground='{self.pal['text_main']}'>{item['title']}</span>")
+            t_lbl.set_xalign(0.0)
+            text_vbox.pack_start(t_lbl, False, False, 0)
+
+            s_lbl = Gtk.Label()
+            s_lbl.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>{item['sub']}</span>")
+            s_lbl.set_xalign(0.0)
+            text_vbox.pack_start(s_lbl, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_main_action(idx))
+            self.main_buttons.append(btn)
+            tools_box.pack_start(btn, False, False, 0)
+
+        main_vbox.pack_start(tools_box, True, True, 0)
+
+        # Footer
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer.set_margin_bottom(10)
+        footer.set_margin_left(18)
+        footer.set_margin_right(18)
+
+        hint = Gtk.Label()
+        hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] EXECUTE   [ ESC / Q ] CLOSE</span>")
+        hint.set_xalign(0.5)
+        footer.pack_start(hint, True, True, 0)
+        main_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(main_vbox, "main")
+
+    def build_rec_view(self):
+        rec_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Header
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        header.get_style_context().add_class("header-box")
+
+        title = Gtk.Label()
+        title.set_markup(f"<span font_weight='bold' font_size='11500' foreground='{self.pal['red']}'>🎥 MISSION RECORDER // CONFIGURATION</span>")
+        title.set_xalign(0.0)
+        header.pack_start(title, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(f"<span font_size='8500' foreground='{self.pal['text_dim']}'>CONFIGURE CAPTURE REGION, AUDIO FEEDS &amp; TRANSIENT OVERLAYS</span>")
+        sub.set_xalign(0.0)
+        header.pack_start(sub, False, False, 0)
+        rec_vbox.pack_start(header, False, False, 0)
+
+        # Configuration body
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        body.set_margin_top(12)
+        body.set_margin_bottom(12)
+        body.set_margin_left(18)
+        body.set_margin_right(18)
+
+        self.rec_ctrl_items = []
+
+        # 0: Mode Area
+        self.btn_mode_area = Gtk.EventBox()
+        self.btn_mode_area.get_style_context().add_class("toggle-btn")
+        lbl_ma = Gtk.Label()
+        self.lbl_mode_area = lbl_ma
+        self.btn_mode_area.add(lbl_ma)
+        self.btn_mode_area.connect("button-press-event", lambda w, e: self.toggle_rec_mode("area"))
+        body.pack_start(self.btn_mode_area, False, False, 0)
+        self.rec_ctrl_items.append(self.btn_mode_area)
+
+        # 1: Mode Fullscreen
+        self.btn_mode_full = Gtk.EventBox()
+        self.btn_mode_full.get_style_context().add_class("toggle-btn")
+        lbl_mf = Gtk.Label()
+        self.lbl_mode_full = lbl_mf
+        self.btn_mode_full.add(lbl_mf)
+        self.btn_mode_full.connect("button-press-event", lambda w, e: self.toggle_rec_mode("full"))
+        body.pack_start(self.btn_mode_full, False, False, 0)
+        self.rec_ctrl_items.append(self.btn_mode_full)
+
+        # 2: System Audio Toggle
+        self.btn_sys_audio = Gtk.EventBox()
+        self.btn_sys_audio.get_style_context().add_class("toggle-btn")
+        lbl_sa = Gtk.Label()
+        self.lbl_sys_audio = lbl_sa
+        self.btn_sys_audio.add(lbl_sa)
+        self.btn_sys_audio.connect("button-press-event", lambda w, e: self.toggle_opt("sys_audio"))
+        body.pack_start(self.btn_sys_audio, False, False, 0)
+        self.rec_ctrl_items.append(self.btn_sys_audio)
+
+        # 3: Microphone Audio Toggle
+        self.btn_mic_audio = Gtk.EventBox()
+        self.btn_mic_audio.get_style_context().add_class("toggle-btn")
+        lbl_mi = Gtk.Label()
+        self.lbl_mic_audio = lbl_mi
+        self.btn_mic_audio.add(lbl_mi)
+        self.btn_mic_audio.connect("button-press-event", lambda w, e: self.toggle_opt("mic_audio"))
+        body.pack_start(self.btn_mic_audio, False, False, 0)
+        self.rec_ctrl_items.append(self.btn_mic_audio)
+
+        # 4: Keystroke Overlay Toggle (Default OFF)
+        self.btn_keys = Gtk.EventBox()
+        self.btn_keys.get_style_context().add_class("toggle-btn")
+        lbl_ky = Gtk.Label()
+        self.lbl_keys = lbl_ky
+        self.btn_keys.add(lbl_ky)
+        self.btn_keys.connect("button-press-event", lambda w, e: self.toggle_opt("keystrokes"))
+        body.pack_start(self.btn_keys, False, False, 0)
+        self.rec_ctrl_items.append(self.btn_keys)
+
+        # Action Buttons Box
+        act_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        act_box.set_homogeneous(True)
+        act_box.set_margin_top(6)
+
+        # 5: Start / Engage Button
+        self.btn_engage = Gtk.EventBox()
+        self.btn_engage.get_style_context().add_class("action-btn")
+        self.btn_engage.get_style_context().add_class("engage")
+        self.lbl_engage = Gtk.Label()
+        self.btn_engage.add(self.lbl_engage)
+        self.btn_engage.connect("button-press-event", lambda w, e: self.start_rec())
+        act_box.pack_start(self.btn_engage, True, True, 0)
+        self.rec_ctrl_items.append(self.btn_engage)
+
+        # 6: Cancel / Back Button
+        self.btn_back = Gtk.EventBox()
+        self.btn_back.get_style_context().add_class("action-btn")
+        self.lbl_back = Gtk.Label()
+        self.btn_back.add(self.lbl_back)
+        self.btn_back.connect("button-press-event", lambda w, e: self.switch_to_main_view())
+        act_box.pack_start(self.btn_back, True, True, 0)
+        self.rec_ctrl_items.append(self.btn_back)
+
+        body.pack_start(act_box, False, False, 0)
+        rec_vbox.pack_start(body, True, True, 0)
+
+        # Footer
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        footer.set_margin_bottom(10)
+        footer.set_margin_left(18)
+        footer.set_margin_right(18)
+
+        hint = Gtk.Label()
+        hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ ↑/↓ ] NAVIGATE   [ S/M/K ] TOGGLE   [ ENTER/R ] ENGAGE   [ ESC ] BACK</span>")
+        hint.set_xalign(0.5)
+        footer.pack_start(hint, True, True, 0)
+        rec_vbox.pack_start(footer, False, False, 0)
+
+        self.stack.add_named(rec_vbox, "rec")
+        self.refresh_rec_ui()
+
+    def refresh_rec_ui(self):
+        # Mode Area
+        ma_act = (self.rec_mode == "area")
+        ma_col = self.pal['accent'] if ma_act else self.pal['text_dim']
+        self.lbl_mode_area.set_markup(f"<span font_weight='bold' foreground='{ma_col}'>[{'●' if ma_act else '○'}] [1] REGION SELECTION (Drag area with slurp)</span>")
+        self.lbl_mode_area.set_xalign(0.0)
+
+        # Mode Full
+        mf_act = (self.rec_mode == "full")
+        mf_col = self.pal['accent'] if mf_act else self.pal['text_dim']
+        self.lbl_mode_full.set_markup(f"<span font_weight='bold' foreground='{mf_col}'>[{'●' if mf_act else '○'}] [2] FULL SCREEN DISPLAY (All monitors)</span>")
+        self.lbl_mode_full.set_xalign(0.0)
+
+        # Sys Audio
+        sa_col = self.pal['green'] if self.rec_sys_audio else self.pal['text_dim']
+        sa_txt = "[ ON  ]" if self.rec_sys_audio else "[ OFF ]"
+        self.lbl_sys_audio.set_markup(f"<span font_weight='bold' foreground='{sa_col}'>[{'✔' if self.rec_sys_audio else ' '}] [S] DESKTOP AUDIO (System sounds): {sa_txt}</span>")
+        self.lbl_sys_audio.set_xalign(0.0)
+
+        # Mic Audio
+        mi_col = self.pal['green'] if self.rec_mic_audio else self.pal['text_dim']
+        mi_txt = "[ ON  ]" if self.rec_mic_audio else "[ OFF ]"
+        self.lbl_mic_audio.set_markup(f"<span font_weight='bold' foreground='{mi_col}'>[{'✔' if self.rec_mic_audio else ' '}] [M] MICROPHONE (Intercom voice): {mi_txt}</span>")
+        self.lbl_mic_audio.set_xalign(0.0)
+
+        # Keystrokes (Security strict: default OFF)
+        ky_col = self.pal['cyan'] if self.rec_keystrokes else self.pal['text_dim']
+        ky_txt = "[ ON  ]" if self.rec_keystrokes else "[ OFF ]"
+        self.lbl_keys.set_markup(f"<span font_weight='bold' foreground='{ky_col}'>[{'✔' if self.rec_keystrokes else ' '}] [K] SHOW KEYSTROKES (On-screen overlay): {ky_txt}</span>")
+        self.lbl_keys.set_xalign(0.0)
+
+        # Action buttons
+        self.lbl_engage.set_markup(f"<span font_weight='bold' foreground='{self.pal['green']}'>[ ENTER / R ] START RECORDING</span>")
+        self.lbl_back.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_sub']}'>[ ESC / B ] CANCEL &amp; RETURN</span>")
+
+        # Update selection class
+        for i, btn in enumerate(self.rec_ctrl_items):
+            ctx = btn.get_style_context()
+            if i == self.selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+    def refresh_main_ui(self):
+        rec_active = is_recording_active()
+        for i, btn in enumerate(self.main_buttons):
+            ctx = btn.get_style_context()
+            if i == self.selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
+            if i == 2:
+                if rec_active:
+                    ctx.add_class("active-rec")
+                else:
+                    ctx.remove_class("active-rec")
+
+    def switch_to_main_view(self):
+        self.current_view = "main"
+        self.selected_idx = 0
+        self.refresh_main_ui()
+        self.stack.set_visible_child_name("main")
+
+    def switch_to_rec_view(self):
+        self.current_view = "rec"
+        self.selected_idx = 0
+        self.refresh_rec_ui()
+        self.stack.set_visible_child_name("rec")
+
+    def toggle_rec_mode(self, mode):
+        self.rec_mode = mode
+        self.refresh_rec_ui()
+
+    def toggle_opt(self, opt_name):
+        if opt_name == "sys_audio":
+            self.rec_sys_audio = not self.rec_sys_audio
+        elif opt_name == "mic_audio":
+            self.rec_mic_audio = not self.rec_mic_audio
+        elif opt_name == "keystrokes":
+            self.rec_keystrokes = not self.rec_keystrokes
+        self.refresh_rec_ui()
+
+    def start_rec(self):
+        self.hide()
+        cleanup()
+        cmd = ["space-capture", "record", self.rec_mode]
+        if self.rec_sys_audio:
+            cmd.append("--sys-audio")
+        if self.rec_mic_audio:
+            cmd.append("--mic-audio")
+        if self.rec_keystrokes:
+            cmd.append("--keystrokes")
+
+        # Slight delay to ensure dialog has unmapped from compositor
+        GLib.timeout_add(150, lambda: (subprocess.Popen(cmd, start_new_session=True), Gtk.main_quit()))
+
+    def trigger_main_action(self, idx):
+        item = self.tool_items[idx]
+        action = item["action"]
+
+        if action == "area_shot":
+            self.hide()
+            cleanup()
+            GLib.timeout_add(150, lambda: (subprocess.Popen(["space-capture", "area"], start_new_session=True), Gtk.main_quit()))
+        elif action == "full_shot":
+            self.hide()
+            cleanup()
+            GLib.timeout_add(150, lambda: (subprocess.Popen(["space-capture", "full"], start_new_session=True), Gtk.main_quit()))
+        elif action == "rec_menu":
+            if is_recording_active():
+                # Stop recording
+                self.hide()
+                cleanup()
+                subprocess.Popen(["space-capture", "stop"], start_new_session=True)
+                Gtk.main_quit()
+            else:
+                self.switch_to_rec_view()
+        elif action == "open_prints":
+            self.hide()
+            cleanup()
+            p_dir = os.path.expanduser("~/Pictures/prints")
+            os.makedirs(p_dir, exist_ok=True)
+            subprocess.Popen(["xdg-open", p_dir], start_new_session=True)
+            Gtk.main_quit()
+        elif action == "open_videos":
+            self.hide()
+            cleanup()
+            v_dir = os.path.expanduser("~/Videos")
+            os.makedirs(v_dir, exist_ok=True)
+            subprocess.Popen(["xdg-open", v_dir], start_new_session=True)
+            Gtk.main_quit()
+
+    def on_key_press(self, widget, event):
+        keyname = Gdk.keyval_name(event.keyval)
+
+        if self.current_view == "main":
+            if keyname in ["Escape", "q", "Q"]:
+                cleanup()
+                Gtk.main_quit()
+                return True
+            if keyname in ["Down", "j", "J", "Tab"]:
+                self.selected_idx = (self.selected_idx + 1) % len(self.tool_items)
+                self.refresh_main_ui()
+                return True
+            if keyname in ["Up", "k", "K", "ISO_Left_Tab"]:
+                self.selected_idx = (self.selected_idx - 1 + len(self.tool_items)) % len(self.tool_items)
+                self.refresh_main_ui()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.trigger_main_action(self.selected_idx)
+                return True
+            if keyname in ["1", "2", "3", "4", "5"]:
+                idx = int(keyname) - 1
+                if 0 <= idx < len(self.tool_items):
+                    self.trigger_main_action(idx)
+                    return True
+            return False
+
+        elif self.current_view == "rec":
+            if keyname in ["Escape", "BackSpace", "b", "B", "q", "Q"]:
+                self.switch_to_main_view()
+                return True
+            if keyname in ["Down", "j", "J", "Tab"]:
+                self.selected_idx = (self.selected_idx + 1) % len(self.rec_ctrl_items)
+                self.refresh_rec_ui()
+                return True
+            if keyname in ["Up", "k", "K", "ISO_Left_Tab"]:
+                self.selected_idx = (self.selected_idx - 1 + len(self.rec_ctrl_items)) % len(self.rec_ctrl_items)
+                self.refresh_rec_ui()
+                return True
+            if keyname in ["1"]:
+                self.toggle_rec_mode("area")
+                return True
+            if keyname in ["2"]:
+                self.toggle_rec_mode("full")
+                return True
+            if keyname in ["s", "S"]:
+                self.toggle_opt("sys_audio")
+                return True
+            if keyname in ["m", "M"]:
+                self.toggle_opt("mic_audio")
+                return True
+            if keyname in ["k", "K"]:
+                self.toggle_opt("keystrokes")
+                return True
+            if keyname in ["r", "R"]:
+                self.start_rec()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                if self.selected_idx == 0:
+                    self.toggle_rec_mode("area")
+                elif self.selected_idx == 1:
+                    self.toggle_rec_mode("full")
+                elif self.selected_idx == 2:
+                    self.toggle_opt("sys_audio")
+                elif self.selected_idx == 3:
+                    self.toggle_opt("mic_audio")
+                elif self.selected_idx == 4:
+                    self.toggle_opt("keystrokes")
+                elif self.selected_idx == 5:
+                    self.start_rec()
+                elif self.selected_idx == 6:
+                    self.switch_to_main_view()
+                return True
+            return False
+
+        return False
+
+def check_singleton():
+    my_pid = os.getpid()
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+def cleanup():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def main():
+    check_singleton()
+    init_view = "rec" if (len(sys.argv) > 1 and sys.argv[1] in ["rec", "record"]) else "main"
+    win = SpaceToolsDialog(initial_view=init_view)
+    win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""
+Space Mission Control - Theme Variation OSD Overlay
+Renders a centered mid-screen HUD displaying the activated theme variation name
+with smooth fade-in and fade-out visual effects.
+Adheres strictly to the dark chassis and zero-white-background policy.
+"""
+import sys
+import os
+import signal
+import time
+import warnings
+from pathlib import Path
+
+# Suppress GTK deprecation warnings
+warnings.filterwarnings("ignore")
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+gi.require_version('GtkLayerShell', '0.1')
+from gi.repository import Gtk, Gdk, GtkLayerShell, GLib
+
+PID_FILE = Path(f"/tmp/space-theme-osd-{os.getuid()}.pid")
+
+THEMES_DATA = {
+    "nasa": {
+        "title": "NASA FLIGHT OPERATIONS",
+        "tag": "APOLLO MISSION CONTROL",
+        "desc": "DSKY Dual-Luminescent Amber & Houston Capcom Slate",
+        "accent": "#ffb000",
+        "accent_dim": "#b37c00",
+        "secondary": "#2ef788",
+        "bg": "rgba(10, 13, 18, 0.94)",
+        "card": "rgba(16, 22, 30, 0.96)",
+        "border": "rgba(255, 176, 0, 0.85)",
+        "glow": "rgba(255, 176, 0, 0.35)",
+        "badge": "🛸 APOLLO-11",
+    },
+    "crt-amber": {
+        "title": "CRT AMBER MAINFRAME",
+        "tag": "IBM / DEC CONSOLE",
+        "desc": "590nm P3 Monochromatic Amber Phosphor Screen",
+        "accent": "#ff9e00",
+        "accent_dim": "#b36f00",
+        "secondary": "#ffbb33",
+        "bg": "rgba(8, 9, 12, 0.94)",
+        "card": "rgba(16, 18, 24, 0.96)",
+        "border": "rgba(255, 158, 0, 0.85)",
+        "glow": "rgba(255, 158, 0, 0.35)",
+        "badge": "⚡ CRT-590NM",
+    },
+    "crt-green": {
+        "title": "CRT GREEN MATRIX",
+        "tag": "DEC VT100 TERMINAL",
+        "desc": "525nm P1 High-Persistence Green Phosphor Display",
+        "accent": "#33ff33",
+        "accent_dim": "#22aa22",
+        "secondary": "#55ff55",
+        "bg": "rgba(4, 8, 4, 0.94)",
+        "card": "rgba(10, 20, 10, 0.96)",
+        "border": "rgba(51, 255, 51, 0.85)",
+        "glow": "rgba(51, 255, 51, 0.35)",
+        "badge": "📟 VT100-P1",
+    },
+    "kosmos-vfd": {
+        "title": "KOSMOS VFD MINT",
+        "tag": "VOSTOK / SOYUZ CONTROL",
+        "desc": "Soviet Space Program Vacuum Fluorescent Display",
+        "accent": "#48e5c2",
+        "accent_dim": "#2fa088",
+        "secondary": "#2ef788",
+        "bg": "rgba(5, 14, 12, 0.94)",
+        "card": "rgba(10, 26, 22, 0.96)",
+        "border": "rgba(72, 229, 194, 0.85)",
+        "glow": "rgba(72, 229, 194, 0.35)",
+        "badge": "🚀 VOSTOK-VFD",
+    },
+}
+
+class ThemeOSDWindow(Gtk.Window):
+    def __init__(self, theme_key):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        
+        self.theme_key = theme_key if theme_key in THEMES_DATA else "nasa"
+        self.data = THEMES_DATA[self.theme_key]
+        
+        # Transparent RGBA visual
+        screen = self.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual:
+            self.set_visual(visual)
+        self.set_app_paintable(True)
+        
+        # GtkLayerShell setup for Wayland overlay
+        GtkLayerShell.init_for_window(self)
+        GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+        GtkLayerShell.set_namespace(self, "space-theme-osd")
+        GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.NONE)
+        GtkLayerShell.set_exclusive_zone(self, -1)
+        
+        # Mid-screen center placement (no anchors pinned)
+        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, False)
+        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.BOTTOM, False)
+        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, False)
+        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, False)
+        
+        # Start invisible for fade-in
+        self.set_opacity(0.0)
+        
+        self._build_ui()
+        self._apply_css()
+        
+        # Timing parameters (in seconds)
+        self.start_time = time.time()
+        self.fade_in_dur = 0.16
+        self.hold_dur = 0.85
+        self.fade_out_dur = 0.22
+        self.total_dur = self.fade_in_dur + self.hold_dur + self.fade_out_dur
+        
+        GLib.timeout_add(16, self._on_tick)
+
+    def _build_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_box.set_name("osd-container")
+        
+        inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        inner_box.set_name("osd-card")
+        
+        # Top status bar
+        top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        
+        badge = Gtk.Label(label=f"● {self.data['badge']}")
+        badge.set_name("osd-badge")
+        badge.set_halign(Gtk.Align.START)
+        
+        status_lbl = Gtk.Label(label="PROFILE ENGAGED // NOMINAL")
+        status_lbl.set_name("osd-status")
+        status_lbl.set_halign(Gtk.Align.END)
+        status_lbl.set_hexpand(True)
+        
+        top_bar.pack_start(badge, False, False, 0)
+        top_bar.pack_end(status_lbl, False, False, 0)
+        inner_box.pack_start(top_bar, False, False, 0)
+        
+        # Separator line
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep.set_name("osd-separator")
+        inner_box.pack_start(sep, False, False, 2)
+        
+        # Main theme variation title
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title_lbl = Gtk.Label(label=self.data["title"])
+        title_lbl.set_name("osd-title")
+        title_lbl.set_halign(Gtk.Align.CENTER)
+        
+        tag_lbl = Gtk.Label(label=f"⟨ {self.data['tag']} ⟩")
+        tag_lbl.set_name("osd-tag")
+        tag_lbl.set_halign(Gtk.Align.CENTER)
+        
+        title_box.pack_start(title_lbl, False, False, 0)
+        title_box.pack_start(tag_lbl, False, False, 0)
+        inner_box.pack_start(title_box, False, False, 6)
+        
+        # Subtitle telemetry description
+        desc_lbl = Gtk.Label(label=self.data["desc"])
+        desc_lbl.set_name("osd-desc")
+        desc_lbl.set_halign(Gtk.Align.CENTER)
+        inner_box.pack_start(desc_lbl, False, False, 0)
+        
+        # Bottom telemetry indicators
+        bottom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bottom_box.set_halign(Gtk.Align.CENTER)
+        
+        ind1 = Gtk.Label(label="[ SYS: OK ]")
+        ind1.set_name("osd-ind-ok")
+        ind2 = Gtk.Label(label="[ TELEMETRY: SYNC ]")
+        ind2.set_name("osd-ind-sync")
+        ind3 = Gtk.Label(label="[ PALETTE: APPLIED ]")
+        ind3.set_name("osd-ind-ok")
+        
+        bottom_box.pack_start(ind1, False, False, 4)
+        bottom_box.pack_start(ind2, False, False, 4)
+        bottom_box.pack_start(ind3, False, False, 4)
+        inner_box.pack_start(bottom_box, False, False, 4)
+        
+        main_box.pack_start(inner_box, True, True, 0)
+        self.add(main_box)
+
+    def _apply_css(self):
+        css = f"""
+        #osd-container {{
+            background: transparent;
+            padding: 12px;
+        }}
+        #osd-card {{
+            background-color: {self.data['bg']};
+            border: 2px solid {self.data['border']};
+            border-radius: 4px;
+            padding: 18px 36px;
+            box-shadow: 0 0 30px {self.data['glow']}, inset 0 0 15px rgba(0, 0, 0, 0.8);
+        }}
+        #osd-badge {{
+            color: {self.data['accent']};
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+        }}
+        #osd-status {{
+            color: {self.data['secondary']};
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }}
+        #osd-separator {{
+            background-color: {self.data['accent_dim']};
+            min-height: 1px;
+            opacity: 0.6;
+        }}
+        #osd-title {{
+            color: {self.data['accent']};
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 20px;
+            font-weight: 900;
+            letter-spacing: 3px;
+        }}
+        #osd-tag {{
+            color: {self.data['secondary']};
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            margin-top: 2px;
+        }}
+        #osd-desc {{
+            color: #d1d9e0;
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+        }}
+        #osd-ind-ok {{
+            color: {self.data['secondary']};
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 10px;
+            font-weight: 700;
+        }}
+        #osd-ind-sync {{
+            color: {self.data['accent']};
+            font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+            font-size: 10px;
+            font-weight: 700;
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def _on_tick(self):
+        elapsed = time.time() - self.start_time
+        if elapsed < self.fade_in_dur:
+            opacity = elapsed / self.fade_in_dur
+        elif elapsed < (self.fade_in_dur + self.hold_dur):
+            opacity = 1.0
+        elif elapsed < self.total_dur:
+            fade_out_elapsed = elapsed - (self.fade_in_dur + self.hold_dur)
+            opacity = 1.0 - (fade_out_elapsed / self.fade_out_dur)
+        else:
+            self.set_opacity(0.0)
+            Gtk.main_quit()
+            return False
+            
+        self.set_opacity(max(0.0, min(1.0, opacity)))
+        return True
+
+
+def kill_previous_instance():
+    if PID_FILE.exists():
+        try:
+            old_pid = int(PID_FILE.read_text().strip())
+            if old_pid != os.getpid():
+                os.kill(old_pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def main():
+    kill_previous_instance()
+    
+    # Write current PID
+    PID_FILE.write_text(str(os.getpid()))
+    
+    # Determine theme
+    theme_name = "nasa"
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        theme_name = sys.argv[1].strip()
+    else:
+        state_file = Path(os.path.expanduser("~/.config/themes/current_theme"))
+        if state_file.exists():
+            theme_name = state_file.read_text().strip()
+            
+    win = ThemeOSDWindow(theme_name)
+    win.show_all()
+    
+    def cleanup(*_):
+        try:
+            PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        Gtk.main_quit()
+        
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+    
+    try:
+        Gtk.main()
+    finally:
+        try:
+            PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    main()

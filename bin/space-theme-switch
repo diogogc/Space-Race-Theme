@@ -67,7 +67,7 @@ ln -sf "$THEMES_DIR/$target/waybar.css" "$HOME/.config/waybar/theme-current.css"
 if [[ -d "$HOME/.config/kitty" && -f "$THEMES_DIR/$target/kitty.conf" ]]; then
   ln -sf "$THEMES_DIR/$target/kitty.conf" "$HOME/.config/kitty/theme-current.conf"
   ln -sf "$THEMES_DIR/$target/kitty.conf" "$HOME/.config/kitty/current-theme.conf"
-  if command -v kitty &>/dev/null; then
+  if command -v kitty &>/dev/null && pgrep -x kitty &>/dev/null; then
     kitty @ set-colors -a -c "$THEMES_DIR/$target/kitty.conf" 2>/dev/null || true
   fi
 fi
@@ -75,6 +75,22 @@ fi
 # 3b. Starship Prompt & Shell Telemetry
 if [[ -f "$THEMES_DIR/$target/starship.toml" ]]; then
   ln -sf "$THEMES_DIR/$target/starship.toml" "$HOME/.config/starship.toml"
+fi
+
+# 3c. Ghostty Terminal
+if [[ -d "$HOME/.config/ghostty" && -f "$THEMES_DIR/$target/ghostty" ]]; then
+  mkdir -p "$HOME/.config/ghostty/themes"
+  ln -sf "$THEMES_DIR/$target/ghostty" "$HOME/.config/ghostty/themes/space-theme"
+  ln -sf "$THEMES_DIR/$target/ghostty" "$HOME/.config/ghostty/themes/$target"
+fi
+
+# 3d. Tmux Terminal Multiplexer
+if [[ -f "$THEMES_DIR/$target/tmux.conf" ]]; then
+  mkdir -p "$HOME/.config/tmux"
+  ln -sf "$THEMES_DIR/$target/tmux.conf" "$HOME/.config/tmux/theme-current.conf"
+  if command -v tmux &>/dev/null && tmux info &>/dev/null; then
+    tmux source-file "$HOME/.config/tmux/theme-current.conf" 2>/dev/null || true
+  fi
 fi
 
 # 4. Wallpaper
@@ -224,30 +240,14 @@ fi
 # Reload DSKY Launcher live if active
 pkill -USR1 -f dsky-launcher 2>/dev/null || true
 
-# Send notification if notify-send is available
-title="MISSION PROFILE ENGAGED"
-body="Active Profile: ${target^^}\nFlight Controls & Telemetry: NOMINAL"
-
-case "$target" in
-  "nasa")
-    body="Profile: NASA (Flight Operations)\nTelemetry: DSKY Amber & Instruments White"
-    ;;
-  "crt-amber")
-    body="Profile: CRT-AMBER (IBM / DEC Mainframe CRT)\nTelemetry: 590nm Phosphor Glow"
-    ;;
-  "crt-green")
-    body="Profile: CRT-GREEN (DEC VT100 Matrix CRT)\nTelemetry: 525nm P1 Phosphor Glow"
-    ;;
-  "kosmos-vfd")
-    body="Profile: KOSMOS-VFD (Soviet Space Program)\nTelemetry: VFD Electric Mint Glow"
-    ;;
-esac
-
-if command -v notify-send &>/dev/null; then
-  notify-send -t 3500 "$title" "$body" 2>/dev/null || true
+# Trigger mid-screen OSD HUD overlay
+if command -v space-theme-osd &>/dev/null; then
+  setsid space-theme-osd "$target" >/dev/null 2>&1 &
+elif [[ -x "$HOME/.local/bin/space-theme-osd" ]]; then
+  setsid "$HOME/.local/bin/space-theme-osd" "$target" >/dev/null 2>&1 &
 fi
 
 # Play Apollo Quindar intro tone
-command -v space-quindar &>/dev/null && space-quindar intro 2>/dev/null || true
+command -v space-quindar &>/dev/null && (space-quindar intro >/dev/null 2>&1 &) || true
 
 echo "Successfully loaded mission profile: $target"

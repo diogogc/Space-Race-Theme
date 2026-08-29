@@ -24,6 +24,9 @@ window#waybar {
     box-shadow: 0 0 4px rgba(255, 176, 0, 0.3);
 }
 
+
+
+
 #custom-telemetry {
     background-color: @bg_card;
     color: @telem_green;
@@ -104,4 +107,23 @@ tooltip {
 
 tooltip label {
     color: @fg_primary;
+}
+
+#custom-tools {
+    background-color: @bg_card;
+    border: 1px solid @border_color;
+    color: @fg_primary;
+    font-weight: bold;
+}
+
+#custom-tools:hover {
+    background-color: @dsky_amber;
+    color: #14171d;
+}
+
+#custom-recording {
+    background-color: @bg_card;
+    color: @alert_red;
+    border: 1px solid @alert_red;
+    font-weight: bold;
 }

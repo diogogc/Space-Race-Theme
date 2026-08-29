@@ -5,6 +5,7 @@
 # If not running interactively, exit immediately
 [[ $- != *i* ]] && return
 
+
 # ------------------------------------------------------------------------------
 # 1. HARDENED HISTORY & SECURITY
 # ------------------------------------------------------------------------------
@@ -194,6 +195,13 @@ alias free="free -h"
 
 # Fastfetch Mission Control banner
 alias fetch="fastfetch -c \"$HOME/.config/fastfetch/config.jsonc\""
+
+# Tmux Mission Control multiplexer shortcuts
+alias tm="tmux"
+alias tma="tmux attach-session -t"
+alias tml="tmux list-sessions"
+alias tmn="tmux new-session -s"
+alias tmk="tmux kill-session -t"
 
 # Arch Linux Sysadmin shortcuts
 alias pacup="sudo pacman -Syu"

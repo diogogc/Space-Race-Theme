@@ -13,9 +13,10 @@ window#waybar {
     transition: all 0.3s ease;
 }
 
-#custom-theme,
 #workspaces,
 #window,
+#custom-tools,
+#custom-recording,
 #custom-telemetry,
 #custom-iss,
 #custom-met,
@@ -31,6 +32,16 @@ window#waybar {
     transition: all 0.2s ease;
 }
 
+#custom-tools {
+    font-weight: bold;
+}
+
+#custom-recording {
+    font-weight: bold;
+    color: #ff3333;
+    animation: blink 0.8s infinite alternate;
+}
+
 #custom-power {
     font-weight: bold;
     margin-left: 4px;
@@ -38,10 +49,6 @@ window#waybar {
 
 #custom-network-telemetry {
     min-width: 82px;
-}
-
-#custom-theme {
-    font-weight: bold;
 }
 
 #workspaces {

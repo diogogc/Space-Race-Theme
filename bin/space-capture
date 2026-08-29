@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+"""
+Apollo Mission Control Screen Capture & Recording Engine
+Handles area/full screenshots with clipboard copying and ~/Pictures/prints/ storage,
+video recording with optional system & mic audio routing to ~/Videos/,
+opt-in keystroke overlay with strict lifecycle security termination,
+and Waybar telemetry status.
+"""
+import sys
+import os
+import time
+import subprocess
+import signal
+import json
+import shutil
+from pathlib import Path
+
+PRINTS_DIR = Path.home() / "Pictures" / "prints"
+VIDEOS_DIR = Path.home() / "Videos"
+PID_FILE = Path("/tmp/space-recording.pid")
+INFO_FILE = Path("/tmp/space-recording.info")
+OVERLAY_PID_FILE = Path("/tmp/space-recording-overlay.pid")
+
+def ensure_dirs():
+    PRINTS_DIR.mkdir(parents=True, exist_ok=True)
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+
+def copy_image_to_clipboard(image_path):
+    """Copy an image file to Wayland clipboard using wl-copy or GTK fallback."""
+    if shutil.which("wl-copy"):
+        try:
+            with open(image_path, "rb") as f:
+                res = subprocess.run(["wl-copy", "--type", "image/png"], stdin=f, check=False)
+                if res.returncode == 0:
+                    return True
+        except Exception:
+            pass
+    try:
+        import gi
+        gi.require_version('Gtk', '3.0')
+        gi.require_version('Gdk', '3.0')
+        gi.require_version('GdkPixbuf', '2.0')
+        from gi.repository import Gtk, Gdk, GdkPixbuf
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(image_path))
+        cb = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        cb.set_image(pixbuf)
+        cb.store()
+        return True
+    except Exception as e:
+        print(f"Clipboard fallback error: {e}", file=sys.stderr)
+        return False
+
+def send_notification(title, message, icon_path=None):
+    cmd = ["notify-send", "-a", "Space Mission Tools", title, message]
+    if icon_path and os.path.exists(icon_path):
+        cmd.extend(["-i", str(icon_path)])
+    try:
+        subprocess.Popen(cmd, start_new_session=True)
+    except Exception:
+        pass
+
+def play_feedback_tone():
+    """Play brief confirmation Quindar tone if available."""
+    if shutil.which("space-quindar"):
+        try:
+            subprocess.Popen(["space-quindar"], start_new_session=True)
+        except Exception:
+            pass
+
+def capture_area():
+    """Select screen area with slurp and capture with grim."""
+    ensure_dirs()
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    out_file = PRINTS_DIR / f"screenshot_{timestamp}.png"
+
+    # Select area
+    try:
+        slurp_proc = subprocess.run(
+            ["slurp", "-b", "14171d88", "-c", "ffb000ff", "-w", "2", "-s", "ffb00022"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if slurp_proc.returncode != 0 or not slurp_proc.stdout.strip():
+            # User cancelled area selection
+            return
+        geometry = slurp_proc.stdout.strip()
+    except Exception as e:
+        send_notification("Screenshot Error", f"Failed to execute slurp: {e}")
+        return
+
+    # Grab screenshot
+    try:
+        res = subprocess.run(["grim", "-g", geometry, str(out_file)], check=False)
+        if res.returncode != 0 or not out_file.exists():
+            send_notification("Screenshot Error", "Grim failed to capture region.")
+            return
+    except Exception as e:
+        send_notification("Screenshot Error", f"Failed to capture: {e}")
+        return
+
+    copy_image_to_clipboard(out_file)
+    play_feedback_tone()
+    send_notification(
+        "📸 Area Screenshot Captured",
+        f"Saved to ~/Pictures/prints/{out_file.name}\nCopied to clipboard.",
+        str(out_file)
+    )
+
+def capture_full():
+    """Capture entire desktop with grim."""
+    ensure_dirs()
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    out_file = PRINTS_DIR / f"screenshot_{timestamp}.png"
+
+    try:
+        res = subprocess.run(["grim", str(out_file)], check=False)
+        if res.returncode != 0 or not out_file.exists():
+            send_notification("Screenshot Error", "Grim failed to capture screen.")
+            return
+    except Exception as e:
+        send_notification("Screenshot Error", f"Failed to capture: {e}")
+        return
+
+    copy_image_to_clipboard(out_file)
+    play_feedback_tone()
+    send_notification(
+        "🖥️ Fullscreen Screenshot Captured",
+        f"Saved to ~/Pictures/prints/{out_file.name}\nCopied to clipboard.",
+        str(out_file)
+    )
+
+def get_default_audio_sink():
+    """Find the default audio sink monitor name for system audio recording."""
+    try:
+        res = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, check=False)
+        sink = res.stdout.strip()
+        if sink:
+            return f"{sink}.monitor"
+    except Exception:
+        pass
+    return "@DEFAULT_AUDIO_SINK@.monitor"
+
+def get_default_audio_source():
+    """Find the default microphone source name."""
+    try:
+        res = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True, check=False)
+        src = res.stdout.strip()
+        if src:
+            return src
+    except Exception:
+        pass
+    return "@DEFAULT_AUDIO_SOURCE@"
+
+def is_recording():
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            # Stale PID file
+            cleanup_recording_state()
+    return False
+
+def cleanup_recording_state():
+    # Force kill any lingering keystroke overlay immediately for security guarantee
+    kill_keystroke_overlay()
+    try:
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+    except Exception:
+        pass
+    try:
+        if INFO_FILE.exists():
+            INFO_FILE.unlink()
+    except Exception:
+        pass
+
+def kill_keystroke_overlay():
+    """Guarantees keystroke overlay daemon is killed immediately."""
+    if OVERLAY_PID_FILE.exists():
+        try:
+            opid = int(OVERLAY_PID_FILE.read_text().strip())
+            os.kill(opid, signal.SIGTERM)
+            time.sleep(0.1)
+            try:
+                os.kill(opid, signal.SIGKILL)
+            except OSError:
+                pass
+        except Exception:
+            pass
+        try:
+            OVERLAY_PID_FILE.unlink()
+        except Exception:
+            pass
+    # Extra safety: ensure no stray showmethekey processes remain
+    try:
+        subprocess.run(["pkill", "-x", "showmethekey-gtk"], capture_output=True, check=False)
+    except Exception:
+        pass
+
+def start_recording(mode="area", sys_audio=False, mic_audio=False, keystrokes=False):
+    """Start screen video recording."""
+    if is_recording():
+        stop_recording()
+        return
+
+    ensure_dirs()
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    out_file = VIDEOS_DIR / f"recording_{timestamp}.mp4"
+
+    geometry = None
+    if mode == "area":
+        try:
+            slurp_proc = subprocess.run(
+                ["slurp", "-b", "14171d88", "-c", "ff3333ff", "-w", "2", "-s", "ff333322"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if slurp_proc.returncode != 0 or not slurp_proc.stdout.strip():
+                # User cancelled
+                return
+            geometry = slurp_proc.stdout.strip()
+        except Exception as e:
+            send_notification("Recorder Error", f"Failed to execute slurp: {e}")
+            return
+
+    # Check recorder binary
+    recorder_bin = "wf-recorder"
+    if not shutil.which("wf-recorder"):
+        send_notification(
+            "Recorder Required",
+            "wf-recorder is needed for screen recording.\nPlease install it: sudo pacman -S wf-recorder"
+        )
+        return
+
+    # Keystroke overlay: ONLY if user explicitly enabled it for this session
+    if keystrokes:
+        if shutil.which("showmethekey-gtk"):
+            try:
+                ov_proc = subprocess.Popen(
+                    ["showmethekey-gtk"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+                OVERLAY_PID_FILE.write_text(str(ov_proc.pid))
+            except Exception as e:
+                print(f"Failed to launch showmethekey-gtk: {e}", file=sys.stderr)
+        else:
+            send_notification(
+                "Keystroke Overlay Notice",
+                "showmethekey is not installed.\nInstall with: sudo pacman -S showmethekey"
+            )
+
+    cmd = [recorder_bin, "-f", str(out_file)]
+    if geometry:
+        cmd.extend(["-g", geometry])
+
+    # Audio configuration
+    if sys_audio and mic_audio:
+        sink_dev = get_default_audio_sink()
+        cmd.extend(["-a", sink_dev])
+    elif sys_audio:
+        sink_dev = get_default_audio_sink()
+        cmd.extend(["-a", sink_dev])
+    elif mic_audio:
+        src_dev = get_default_audio_source()
+        cmd.extend(["-a", src_dev])
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        PID_FILE.write_text(str(proc.pid))
+        info = {
+            "pid": proc.pid,
+            "start_time": time.time(),
+            "file": str(out_file),
+            "mode": mode,
+            "sys_audio": sys_audio,
+            "mic_audio": mic_audio,
+            "keystrokes": keystrokes
+        }
+        INFO_FILE.write_text(json.dumps(info))
+        play_feedback_tone()
+        send_notification(
+            "🎥 Screen Recording Started",
+            f"Mode: {mode.upper()} | Output: ~/Videos/{out_file.name}\nClick Waybar REC to stop."
+        )
+    except Exception as e:
+        cleanup_recording_state()
+        send_notification("Recording Error", f"Failed to start recorder: {e}")
+
+def stop_recording():
+    """Stop active recording session and clean up all child daemons."""
+    if not is_recording():
+        cleanup_recording_state()
+        return
+
+    saved_file = None
+    try:
+        if INFO_FILE.exists():
+            data = json.loads(INFO_FILE.read_text())
+            saved_file = data.get("file")
+    except Exception:
+        pass
+
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        # Send SIGINT to allow wf-recorder to flush and close mp4 container
+        os.kill(pid, signal.SIGINT)
+        # Wait up to 3 seconds for clean exit
+        for _ in range(30):
+            time.sleep(0.1)
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception as e:
+        print(f"Error stopping recording: {e}", file=sys.stderr)
+
+    cleanup_recording_state()
+    play_feedback_tone()
+
+    if saved_file and os.path.exists(saved_file):
+        send_notification(
+            "🎬 Screen Recording Saved",
+            f"Saved to ~/Videos/{Path(saved_file).name}"
+        )
+    else:
+        send_notification("🎬 Screen Recording Stopped", "Recording session ended.")
+
+def get_status_json():
+    """Waybar module JSON status output."""
+    if is_recording():
+        try:
+            data = json.loads(INFO_FILE.read_text())
+            elapsed = int(time.time() - data.get("start_time", time.time()))
+            mins = elapsed // 60
+            secs = elapsed % 60
+            rec_file = Path(data.get("file", "")).name
+            return json.dumps({
+                "text": f"🔴 REC [{mins:02d}:{secs:02d}]",
+                "tooltip": f"🎥 ACTIVE SCREEN RECORDING\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n• Elapsed: {mins:02d}:{secs:02d}\n• Target : {rec_file}\n• Click  : STOP Recording",
+                "class": "recording"
+            })
+        except Exception:
+            return json.dumps({
+                "text": "🔴 REC",
+                "tooltip": "Screen Recording active. Click to stop.",
+                "class": "recording"
+            })
+    return json.dumps({
+        "text": "",
+        "tooltip": "",
+        "class": "idle"
+    })
+
+def get_tools_status_json():
+    """Waybar TOOL module JSON status and tooltip."""
+    tooltip = (
+        "🛠️ APOLLO MISSION TOOLS &amp; CAPTURE CONSOLE\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "• Click       : Open Tools &amp; Capture Panel\n"
+        "• Right-Click : Quick Area Screenshot (PrtScn)\n"
+        "• PrtScn      : Area Screenshot (Select &amp; Copy)\n"
+        "• Ctrl+PrtScn : Fullscreen Screenshot (Copy)\n"
+        "• Shift+PrtScn: Screen Video Recorder"
+    )
+    return json.dumps({
+        "text": "TOOL",
+        "tooltip": tooltip,
+        "class": "tools-btn"
+    })
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: space-capture {area|full|record|stop|status|tools-status}")
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+    if cmd == "area":
+        capture_area()
+    elif cmd == "full":
+        capture_full()
+    elif cmd == "record":
+        mode = sys.argv[2] if len(sys.argv) > 2 else "area"
+        sys_audio = "--sys-audio" in sys.argv or "-s" in sys.argv
+        mic_audio = "--mic-audio" in sys.argv or "-m" in sys.argv
+        keystrokes = "--keystrokes" in sys.argv or "-k" in sys.argv
+        start_recording(mode=mode, sys_audio=sys_audio, mic_audio=mic_audio, keystrokes=keystrokes)
+    elif cmd == "stop":
+        stop_recording()
+    elif cmd == "status":
+        print(get_status_json())
+    elif cmd in ["tools-status", "tool-status"]:
+        print(get_tools_status_json())
+    else:
+        print(f"Unknown command: {cmd}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
