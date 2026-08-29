@@ -254,7 +254,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
         .tool-row.active-theme {{
             border: 1.5px solid {self.pal['green']};
         }}
-        button, .action-btn {
+        button, .action-btn {{
             background-color: {self.pal['btn_bg']};
             border: 1px solid {self.pal['btn_border']};
             border-radius: {self.pal['radius']};
@@ -263,12 +263,12 @@ class SpaceThemeConfigDialog(Gtk.Window):
             transition: all 0.15s ease;
             box-shadow: none;
             text-shadow: none;
-        }
-        button:hover, .action-btn:hover, .action-btn.selected {
+        }}
+        button:hover, .action-btn:hover, .action-btn.selected {{
             background-color: {self.pal['btn_hover']};
             border-color: {self.pal['accent']};
             color: {self.pal['text_main']};
-        }
+        }}
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css.encode('utf-8'))
@@ -980,16 +980,34 @@ def check_singleton():
             with open(PID_FILE, "r") as f:
                 old_pid = int(f.read().strip())
             if old_pid != my_pid:
+                is_running = False
                 try:
                     os.kill(old_pid, 0)
-                    os.kill(old_pid, signal.SIGTERM)
+                    try:
+                        with open(f"/proc/{old_pid}/cmdline", "rb") as cf:
+                            cmd = cf.read().decode("utf-8", errors="ignore")
+                            if "space-theme-config" in cmd:
+                                is_running = True
+                    except Exception:
+                        is_running = True
+                except OSError:
+                    is_running = False
+
+                if is_running:
+                    try:
+                        os.kill(old_pid, signal.SIGTERM)
+                    except OSError:
+                        pass
                     try:
                         os.remove(PID_FILE)
                     except OSError:
                         pass
                     sys.exit(0)
-                except OSError:
-                    pass
+                else:
+                    try:
+                        os.remove(PID_FILE)
+                    except OSError:
+                        pass
         except Exception:
             pass
 
