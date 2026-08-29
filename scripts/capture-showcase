@@ -63,6 +63,9 @@ capture_app(["/home/diogo/.local/bin/space-keybinds"], "11_keybinds_cheatsheet.p
 # 12. CAPCOM Audio Intercom
 capture_app(["/home/diogo/.local/bin/space-capcom-dialog"], "12_capcom_audio.png", 1.8)
 
+# 13. Main Power Bus & Energy Telemetry
+capture_app(["/home/diogo/.local/bin/space-energy-dialog"], "13_power_bus.png", 1.8)
+
 # Return to workspace 1
 subprocess.run(["hyprctl", "dispatch", "workspace", "1"], check=True)
-print("ALL 12 CLEAN WORKSPACE SCREENSHOTS CAPTURED SUCCESSFULLY!")
+print("ALL 13 CLEAN WORKSPACE SCREENSHOTS CAPTURED SUCCESSFULLY!")

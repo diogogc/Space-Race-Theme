@@ -76,6 +76,14 @@ The environment features four authentic vintage flight-deck profiles switchable 
 
 <br/>
 
+### ⚡ MDC-02 Main Power Bus & Energy Telemetry Console
+<p align="center">
+  <img src="assets/13_power_bus.png" alt="Main Power Bus Telemetry" width="85%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</p>
+<p align="center"><i>Apollo Command Module vertical edgewise needle meters, ACPI battery telemetry, thermal matrix, and power profiles.</i></p>
+
+<br/>
+
 ### 🛰️ ISS Real-Time Orbital Tracker & Mission Tools Studio
 <p align="center">
   <img src="assets/09_iss_orbital_tracker.png" alt="ISS Tracker" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
