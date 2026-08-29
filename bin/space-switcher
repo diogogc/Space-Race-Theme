@@ -9,6 +9,7 @@ import sys
 import os
 import json
 import socket
+import time
 import signal
 import threading
 import subprocess
@@ -165,6 +166,15 @@ def get_running_windows():
     except Exception:
         return []
     
+    # Identify currently active window
+    active_addr = None
+    try:
+        raw_act = subprocess.check_output(["hyprctl", "-j", "activewindow"], text=True)
+        act_data = json.loads(raw_act)
+        active_addr = act_data.get("address")
+    except Exception:
+        pass
+    
     # Filter valid windows
     valid = []
     for c in clients:
@@ -182,6 +192,15 @@ def get_running_windows():
     
     # Sort by focusHistoryID (0 = current window, 1 = previous window, etc.)
     valid.sort(key=lambda x: x.get("focusHistoryID", 999))
+    
+    # Guarantee currently active window is ALWAYS the first element (index 0)
+    if active_addr:
+        for idx, w in enumerate(valid):
+            if w.get("address") == active_addr:
+                active_win = valid.pop(idx)
+                valid.insert(0, active_win)
+                break
+                
     return valid
 
 def resolve_icon_pixbuf(win_cls, initial_cls, icon_theme, icon_size=48):
@@ -231,10 +250,22 @@ def resolve_icon_pixbuf(win_cls, initial_cls, icon_theme, icon_size=48):
             return info.load_icon()
     except Exception:
         pass
-    return None
+def focus_window_action(addr, ws_id=None):
+    if not addr:
+        return
+    clean_addr = addr if addr.startswith("address:") else f"address:{addr}"
+    if ws_id is not None:
+        try:
+            subprocess.run(["hyprctl", "dispatch", "workspace", str(ws_id)], capture_output=True, timeout=1)
+        except Exception:
+            pass
+    try:
+        subprocess.run(["hyprctl", "dispatch", "focuswindow", clean_addr], capture_output=True, timeout=1)
+    except Exception:
+        pass
 
 class SpaceSwitcherWindow(Gtk.Window):
-    def __init__(self, windows, initial_index=1):
+    def __init__(self, windows, initial_index=0):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         self.windows = windows
         self.count = len(windows)
@@ -259,6 +290,7 @@ class SpaceSwitcherWindow(Gtk.Window):
         self.apply_css()
         self.build_ui()
         
+        self.add_events(Gdk.EventMask.KEY_PRESS_MASK | Gdk.EventMask.KEY_RELEASE_MASK | Gdk.EventMask.STRUCTURE_MASK)
         self.connect("key-press-event", self.on_key_press)
         self.connect("key-release-event", self.on_key_release)
         self.connect("focus-out-event", lambda w, e: self.abort_and_close())
@@ -434,7 +466,7 @@ class SpaceSwitcherWindow(Gtk.Window):
         # 4. Footer Hint
         lbl_hint = Gtk.Label()
         lbl_hint.get_style_context().add_class("footer-lbl")
-        lbl_hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / → ] NEXT  |  [ SHIFT+TAB / ← ] PREV  |  [ RELEASE ALT / ENTER ] ACTIVATE  |  [ ESC ] ABORT</span>")
+        lbl_hint.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / → ] NEXT  |  [ SHIFT+TAB / ← ] PREV  |  [ ENTER / CLICK ] ACTIVATE  |  [ ESC ] ABORT</span>")
         lbl_hint.set_xalign(0.5)
         main_vbox.pack_start(lbl_hint, False, False, 0)
         
@@ -488,8 +520,9 @@ class SpaceSwitcherWindow(Gtk.Window):
         self.cleanup_and_quit()
         if target:
             addr = target.get("address", "")
+            ws_id = target.get("workspace", {}).get("id")
             if addr:
-                subprocess.Popen(["hyprctl", "eval", f'hl.dsp.focus({{ window = "address:{addr}" }})'])
+                focus_window_action(addr, ws_id)
 
     def abort_and_close(self):
         self.hide()
@@ -531,22 +564,6 @@ class SpaceSwitcherWindow(Gtk.Window):
         return False
 
     def on_key_release(self, widget, event):
-        keyval = event.keyval
-        keyname = Gdk.keyval_name(keyval)
-        state = event.state
-        
-        # 1. Direct Alt or Super keycode released
-        if keyname in ["Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R"]:
-            self.activate_and_close()
-            return True
-            
-        # 2. Any key released when Alt or Super modifier is no longer held
-        has_alt = bool(state & Gdk.ModifierType.MOD1_MASK)
-        has_super = bool(state & Gdk.ModifierType.MOD4_MASK)
-        if not has_alt and not has_super:
-            self.activate_and_close()
-            return True
-            
         return False
 
     def run_ipc_server(self):
@@ -583,22 +600,36 @@ def send_ipc_command(cmd):
         return False
     try:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(0.3)
         client.connect(SOCKET_PATH)
         client.sendall(cmd.encode("utf-8"))
         client.close()
         return True
     except Exception:
+        # Socket is stale/dead -> remove it immediately
         try:
-            os.remove(SOCKET_PATH)
+            if os.path.exists(SOCKET_PATH):
+                os.remove(SOCKET_PATH)
         except OSError:
             pass
         return False
 
+def cleanup_socket():
+    try:
+        if os.path.exists(SOCKET_PATH):
+            os.remove(SOCKET_PATH)
+    except Exception:
+        pass
+
 def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "next"
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "init"
     
     # If already running, forward action to existing instance
     if send_ipc_command(cmd):
+        sys.exit(0)
+    
+    # If commanded to release/close when not running, nothing to do
+    if cmd in ["release", "close"]:
         sys.exit(0)
     
     # Get live window hierarchy
@@ -606,15 +637,15 @@ def main():
     if not windows:
         sys.exit(0)
     
-    # If only 1 window, switch focus immediately if needed
-    if len(windows) == 1:
-        addr = windows[0].get("address")
-        if addr:
-            subprocess.Popen(["hyprctl", "eval", f'hl.dsp.focus({{ window = "address:{addr}" }})'])
-        sys.exit(0)
+    # Ensure cleanup on signals
+    signal.signal(signal.SIGINT, lambda s, f: (cleanup_socket(), sys.exit(0)))
+    signal.signal(signal.SIGTERM, lambda s, f: (cleanup_socket(), sys.exit(0)))
     
-    # Start switcher UI
-    init_idx = 1 if cmd != "prev" else (len(windows) - 1)
+    # Start switcher UI: Active window is ALWAYS first (index 0) and initially selected
+    init_idx = 0
+    if cmd == "prev":
+        init_idx = (len(windows) - 1) if len(windows) > 1 else 0
+        
     win = SpaceSwitcherWindow(windows, initial_index=init_idx)
     win.show_all()
     Gtk.main()

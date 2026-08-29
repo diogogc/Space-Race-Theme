@@ -49,6 +49,8 @@ static void transform_command(const char *in, char *out, size_t out_max) {
         "dispatch focusworkspaceoncurrentmonitor ",
         "dispatch movetoworkspace ",
         "dispatch togglespecialworkspace ",
+        "dispatch focuswindow ",
+        "dispatch focus ",
         NULL
     };
 

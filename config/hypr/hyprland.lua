@@ -34,6 +34,21 @@ _G.movetoworkspace = function(ws)
     return hl.dsp.window.move({ workspace = ws })
 end
 
+_G.focuswindow = function(target)
+    if not target then return end
+    local addr = target
+    if type(target) == "string" and target:match("^address:(.+)") then
+        addr = target:match("^address:(.+)")
+    end
+    for _, w in ipairs(hl.get_windows()) do
+        if w.address == addr or w.address == target or w.class == target or w.initialClass == target then
+            hl.dispatch(hl.dsp.focus({ workspace = w.workspace }))
+            return hl.dsp.focus({ window = w })
+        end
+    end
+    return hl.dsp.focus({ window = target })
+end
+
 ------------------
 ---- MONITORS ----
 ------------------
@@ -327,19 +342,11 @@ hl.bind("CTRL + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-
 hl.bind("SHIFT + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-tools-dialog rec"))
 hl.bind(mainMod .. " + SHIFT + P", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-tools-dialog"))
 
--- Apollo Alt+Tab / Super+Tab Mission Window Switcher
+-- Apollo Alt+Tab / Super+Tab Mission Window Switcher (Cycle with Alt+Tab / Super+Tab; Activate with Enter/Click; Dismiss with Esc/Q)
 hl.bind("ALT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher next"))
 hl.bind("ALT + SHIFT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher prev"))
 hl.bind(mainMod .. " + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher next"))
 hl.bind(mainMod .. " + SHIFT + TAB", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher prev"))
-if hl.bindr then
-    pcall(function()
-        hl.bindr("ALT + Alt_L", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
-        hl.bindr("ALT + Alt_R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
-        hl.bindr(mainMod .. " + Super_L", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
-        hl.bindr(mainMod .. " + Super_R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-switcher release"))
-    end)
-end
 
 -- Move focus with mainMod + arrow keys
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
