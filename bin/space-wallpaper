@@ -32,7 +32,7 @@ get_theme_wallpapers() {
     if [[ -d "$THEME_DIR" ]]; then
         while IFS= read -r f; do
             [[ -f "$f" && "$(basename "$f")" != "wallpaper.jpg" ]] && wp_list+=("$(realpath "$f")")
-        done < <(find "$THEME_DIR" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | sort)
+        done < <(find "$THEME_DIR" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) 2>/dev/null | sort)
     fi
 
     # 2. Main Wallpapers directory matching theme name
@@ -47,7 +47,7 @@ get_theme_wallpapers() {
                         wp_list+=("$(realpath "$f")")
                     fi
                 fi
-            done < <(find "$dir" -maxdepth 2 -type f \( -name "*.jpg" -o -name "*.png" \) 2>/dev/null | sort)
+            done < <(find "$dir" -maxdepth 2 -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) 2>/dev/null | sort)
         fi
     done
 
@@ -56,7 +56,7 @@ get_theme_wallpapers() {
         if [[ -d "$hdir" ]]; then
             while IFS= read -r f; do
                 [[ -f "$f" ]] && wp_list+=("$(realpath "$f")")
-            done < <(find "$hdir" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.png" \) 2>/dev/null | sort)
+            done < <(find "$hdir" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) 2>/dev/null | sort)
         fi
     done
 

@@ -397,6 +397,24 @@ class SpaceThemeConfigDialog(Gtk.Window):
         button.btn-install:hover label {{
             color: {self.pal['green']};
         }}
+        button.btn-add {{
+            background-color: {self.pal['btn_bg']};
+            background-image: none;
+            border: 1px solid {self.pal['green']};
+            color: {self.pal['green']};
+        }}
+        button.btn-add label {{
+            color: {self.pal['green']};
+        }}
+        button.btn-add:hover {{
+            background-color: {self.pal['btn_hover']};
+            background-image: none;
+            border-color: {self.pal['green']};
+            color: {self.pal['green']};
+        }}
+        button.btn-add:hover label {{
+            color: {self.pal['green']};
+        }}
         button.btn-remove {{
             background-color: {self.pal['btn_bg']};
             background-image: none;
@@ -440,6 +458,10 @@ class SpaceThemeConfigDialog(Gtk.Window):
         button.btn-cycle:hover label,
         button.btn-preview:hover label {{
             color: {self.pal['accent']};
+        }}
+        dialog, dialog * {{
+            background-color: {self.pal['bg']};
+            color: {self.pal['text_main']};
         }}
         scrolledwindow, viewport {{
             background-color: transparent;
@@ -593,7 +615,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
             self.lbl_tab_screensaver.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛸 [S] SCREENSAVER</span>")
             self.lbl_tab_modules.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📊 [M] TOOLBAR</span>")
             self.lbl_tab_plugins.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📦 [P] PLUGINS</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / S / M / P ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ ENTER ] SET WALLPAPER   [ C ] CYCLE   [ ESC ] CLOSE</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / T / S / M / P ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ A ] ADD IMAGE   [ ENTER ] SET DEFAULT   [ C ] CYCLE   [ ESC ] CLOSE</span>")
         elif self.active_tab == "screensaver":
             self.tab_screensaver.get_style_context().add_class("active")
             self.lbl_tab_theme.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🎨 [T] THEMES</span>")
@@ -698,7 +720,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox.set_margin_start(16)
         vbox.set_margin_end(16)
 
-        # Header card with cycler action
+        # Header card with action buttons
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         card.get_style_context().add_class("card-panel")
 
@@ -709,10 +731,15 @@ class SpaceThemeConfigDialog(Gtk.Window):
         info_box.pack_start(l1, False, False, 0)
 
         l2 = Gtk.Label()
-        l2.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Select an active background or use the in-theme cycler (Super+Alt+W).</span>")
+        l2.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Add custom images or select an active background for {self.current_theme.upper()}.</span>")
         l2.set_xalign(0.0)
         info_box.pack_start(l2, False, False, 0)
         card.pack_start(info_box, True, True, 0)
+
+        btn_add = Gtk.Button(label="➕ Add Image to Theme (A)")
+        btn_add.get_style_context().add_class("btn-add")
+        btn_add.connect("clicked", lambda w: self.add_wallpaper_dialog())
+        card.pack_start(btn_add, False, False, 0)
 
         btn_cycle = Gtk.Button(label="⚡ Cycle (C)")
         btn_cycle.get_style_context().add_class("btn-cycle")
@@ -735,25 +762,54 @@ class SpaceThemeConfigDialog(Gtk.Window):
         for child in self.wp_container.get_children():
             self.wp_container.remove(child)
 
-        theme_wp_dir = THEMES_DIR / self.current_theme / "wallpapers"
         self.wp_file_paths = []
-        if theme_wp_dir.exists():
-            for ext in ["*.jpg", "*.jpeg", "*.png"]:
-                self.wp_file_paths.extend(sorted(list(theme_wp_dir.glob(ext))))
+        found_paths = set()
 
+        # 1. Query space-wallpaper list for active theme catalog
+        try:
+            res = subprocess.run(["space-wallpaper", "list"], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                for line in res.stdout.strip().splitlines():
+                    line = line.strip()
+                    if line and line.startswith("/") and os.path.isfile(line):
+                        p = Path(line).resolve()
+                        if str(p) not in found_paths:
+                            found_paths.add(str(p))
+                            self.wp_file_paths.append(p)
+        except Exception:
+            pass
+
+        # 2. Check active theme directory directly
+        theme_dir = (THEMES_DIR / self.current_theme).resolve()
+        if theme_dir.exists():
+            for ext in ["*.jpg", "*.jpeg", "*.png", "*.webp"]:
+                for f in sorted(list(theme_dir.glob(ext))):
+                    if f.name != "wallpaper.jpg" and str(f.resolve()) not in found_paths:
+                        found_paths.add(str(f.resolve()))
+                        self.wp_file_paths.append(f.resolve())
+
+        # Determine current active wallpaper
         cur_wp = ""
-        cur_wp_file = THEMES_DIR / "current_wallpaper"
-        if cur_wp_file.exists():
-            try:
-                cur_wp = cur_wp_file.read_text().strip()
-            except Exception:
-                pass
+        try:
+            res = subprocess.run(["space-wallpaper", "current"], capture_output=True, text=True, check=False)
+            if res.returncode == 0 and res.stdout.strip():
+                cur_wp = str(Path(res.stdout.strip()).resolve())
+        except Exception:
+            pass
+
+        if not cur_wp:
+            cur_sym = THEMES_DIR / self.current_theme / "wallpaper.jpg"
+            if cur_sym.exists():
+                try:
+                    cur_wp = str(cur_sym.resolve())
+                except Exception:
+                    pass
 
         self.wp_rows = []
         for i, wp_path in enumerate(self.wp_file_paths):
             btn = Gtk.EventBox()
             btn.get_style_context().add_class("tool-row")
-            is_cur = (str(wp_path) == cur_wp)
+            is_cur = (str(wp_path.resolve()) == cur_wp)
             if is_cur:
                 btn.get_style_context().add_class("active-theme")
 
@@ -1264,6 +1320,78 @@ class SpaceThemeConfigDialog(Gtk.Window):
         subprocess.Popen(["space-wallpaper", "next"], start_new_session=True)
         GLib.timeout_add(150, self.populate_wallpaper_rows)
 
+    def add_wallpaper_dialog(self):
+        dialog = Gtk.FileChooserDialog(
+            title=f"Add Wallpaper Image to [{self.current_theme.upper()}] Theme",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Add & Set Default", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+
+        filter_img = Gtk.FileFilter()
+        filter_img.set_name("Image files (*.jpg, *.png, *.jpeg, *.webp)")
+        filter_img.add_mime_type("image/jpeg")
+        filter_img.add_mime_type("image/png")
+        filter_img.add_mime_type("image/webp")
+        filter_img.add_pattern("*.jpg")
+        filter_img.add_pattern("*.jpeg")
+        filter_img.add_pattern("*.png")
+        filter_img.add_pattern("*.webp")
+        dialog.add_filter(filter_img)
+
+        pic_dir = Path(os.path.expanduser("~/Pictures"))
+        if pic_dir.exists():
+            dialog.set_current_folder(str(pic_dir))
+        else:
+            dialog.set_current_folder(os.path.expanduser("~"))
+
+        response = dialog.run()
+        selected_file = dialog.get_filename()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK and selected_file and os.path.isfile(selected_file):
+            self.add_image_to_theme(selected_file)
+
+    def add_image_to_theme(self, source_path):
+        src = Path(source_path).resolve()
+        if not src.exists() or not src.is_file():
+            self.show_toast("Error: Selected image file not found")
+            return
+
+        theme_dir = (THEMES_DIR / self.current_theme).resolve()
+        theme_dir.mkdir(parents=True, exist_ok=True)
+
+        orig_name = src.name
+        # Prevent collision with the wallpaper.jpg symlink itself
+        if orig_name.lower() in ["wallpaper.jpg", "wallpaper.png", "wallpaper.jpeg", "wallpaper.webp"]:
+            target_name = f"custom_{self.current_theme}_{int(time.time())}{src.suffix}"
+        else:
+            target_name = orig_name
+
+        dest_path = theme_dir / target_name
+
+        try:
+            if src != dest_path:
+                shutil.copy2(src, dest_path)
+
+            # Set as default for the selected theme immediately
+            subprocess.run(["space-wallpaper", "set", str(dest_path)], check=False)
+
+            self.populate_wallpaper_rows()
+
+            # Focus the newly added image in the list
+            for idx, p in enumerate(self.wp_file_paths):
+                if p.resolve() == dest_path.resolve():
+                    self.wp_selected_idx = idx
+                    break
+
+            self.refresh_wallpaper_ui()
+            self.show_toast(f"Added & Set Default: {target_name}")
+        except Exception as e:
+            self.show_toast(f"Error copying wallpaper: {e}")
+
     def on_key_press(self, widget, event):
         keyname = Gdk.keyval_name(event.keyval)
 
@@ -1314,6 +1442,9 @@ class SpaceThemeConfigDialog(Gtk.Window):
             return False
 
         elif self.active_tab == "wallpaper":
+            if keyname in ["a", "A"]:
+                self.add_wallpaper_dialog()
+                return True
             if keyname in ["Down", "j", "J"]:
                 if self.wp_rows:
                     self.wp_selected_idx = (self.wp_selected_idx + 1) % len(self.wp_rows)
