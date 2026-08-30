@@ -126,6 +126,81 @@ The environment features four authentic vintage flight-deck profiles switchable 
 
 ---
 
+---
+
+## 🛠️ Flight Instruments & Mission Tools Suite
+
+The environment includes a rich suite of native Python GTK3/Cairo avionics instruments, telemetry daemons, and system utilities designed with a strict zero-white-background policy:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 🛸 APOLLO FLIGHT CONTROL INSTRUMENTATION SUITE                                             │
+├───────────────────────────────┬───────────────────────────────┬─────────────────────────────┤
+│ 📸 space-tools-dialog (4-in-1)│ 🎛️ dsky-launcher (AGC DSKY)   │ 🪟 space-switcher (HUD)     │
+│ • [C] AV Capture & Video Rec  │ • Verb/Noun Guidance Logic    │ • Wayland Alt-Tab Switcher  │
+│ • [E] EECOM System Vitals     │ • 8 Mission App Categories    │ • Live Workspace Chips      │
+│ • [S] Btrfs Root Recovery     │ • Fast Search & Theme Cycling │ • Fast Keyboard Navigation  │
+│ • [D] Multi-Monitor Radar     │                               │                             │
+├───────────────────────────────┼───────────────────────────────┼─────────────────────────────┤
+│ ⚡ space-eecom (Vitals & TRIM)│ 🎨 space-theme-config         │ 📡 space-network-dialog     │
+│ • Diagnostic Health Scoring   │ • 4 Mission Theme Selector    │ • Analog S-Meter RF Gauge   │
+│ • SSD / NVMe Hardware TRIM    │ • Live Wallpaper Gallery      │ • Station Wi-Fi Scanner     │
+│ • .pacnew Reconcile Wizard    │ • 8-Bit Screensaver Settings  │ • Persistent DNS Profiles   │
+│ • Apollo AI Flight Director   │ • Plugin Manager & Updater    │ • WireGuard / OpenVPN Hub   │
+├───────────────────────────────┼───────────────────────────────┼─────────────────────────────┤
+│ 📊 space-telemetry-dialog     │ 🔋 space-energy-dialog (MDC02)│ 🎙️ space-capcom-dialog      │
+│ • Segmented LED CPU Utilization│ • Command Module Edgewise Mtr │ • Dual Real-Time VU Meters  │
+│ • AGC Memory Core Allocation  │ • DC Bus A, B & Volts Readout │ • WirePlumber Device Router │
+│ • Live Process Task Abort     │ • Emergency/Coast Power Modes │ • Quindar Telemetry Tones   │
+└───────────────────────────────┴───────────────────────────────┴─────────────────────────────┘
+```
+
+### Detailed Tools Overview
+
+1. **`space-tools-dialog` (Operations & Tools Console)**:
+   - **AV & Capture (`[C]`)**: Area/Fullscreen screenshots with auto-save to `~/Pictures/prints`, screen video recording studio with audio/mic routing and keystroke overlays.
+   - **EECOM Vitals (`[E]`)**: Live system stability scoring, SSD TRIM, orphan cleaner, pacnew reconciliation, journal vacuum, AI flight director.
+   - **System Recovery (`[S]`)**: Instant Btrfs snapshots (`/@snapshots/manual-*`), autonomous recovery harness, initramfs rebuilds.
+   - **Display Radar (`[D]`)**: Wayland output visualizer with 1-click display topology presets (Extend Right/Left, Mirror, Clamshell Docked, Solo).
+2. **`dsky-launcher` (Apollo AGC Application Launcher)**:
+   - Authentic MIT Apollo Guidance Computer interface with 8 mission filter groups (`Internet`, `Code`, `Terminal`, `Media`, `Graphics`, `System`, `Science`, `All`).
+3. **`space-switcher` (Apollo HUD Mission Window Switcher)**:
+   - Wayland Alt-Tab window switcher modal with live workspace badges and application icons.
+4. **`space-theme-config` (Avionics & Plugin Configurator)**:
+   - Tabbed management console for switching themes, browsing historical wallpapers, tuning screensaver delays, and toggling standalone plugins.
+5. **`space-eecom` (System Vitals & Remediation Suite)**:
+   - Standalone CLI/TUI suite with progress bars, spinners, ANSI markdown formatting, guided safe maintenance (`eecom --fix`), non-AI maintenance menu (`eecom --menu`), SSD TRIM (`eecom --trim`), and AI flight director (`eecom --ai`).
+6. **`space-network-dialog` (Communications & S-Band Wi-Fi Radar)**:
+   - S-Meter RF dial, station scanner, propagation ping speedtest, persistent DNS profiles across all network interfaces, and VPN tunnel dispatch.
+7. **`space-telemetry-dialog` (Hardware Telemetry & Task Abort)**:
+   - Segmented LED CPU utilization meter, AGC memory core gauge, and interactive process task manager with SIGTERM/SIGKILL abort confirmation.
+8. **`space-energy-dialog` (MDC-02 Main Power Bus Telemetry)**:
+   - Apollo Command Module vertical edgewise needle meters, DC Main Bus A/B/Volts telemetry, flight power stage selector, and display brightness slider.
+9. **`space-capcom-dialog` (CAPCOM Audio & Radio Intercom)**:
+   - Dual VU audio meters with peak hold bars, WirePlumber input/output sink selectors, and Quindar audio telemetry test tone generator.
+10. **`space-iss-dialog` & `space-iss-telemetry` (ISS Orbital Tracker)**:
+    - Real-time ISS ground track coordinates, orbital altitude, speed, and astronaut crew roster.
+11. **`space-screensaver` (8-Bit Retro Space Multi-Scene Screensaver)**:
+    - Nearest-neighbor $480 \times 270$ retro pixel scaling across 5 historical spaceflight simulation scenes with lock-on-wake support.
+12. **`space-theme-update` (Theme & Plugin Update Engine)**:
+    - Synchronizes repository updates, builds C daemons, refreshes symlinks, and reloads Waybar & Hyprland.
+
+---
+
+## 📚 Comprehensive Flight Operations Wiki
+
+The repository includes a complete, modular documentation wiki covering design architecture, avionics instruments, maintenance suites, and recovery runbooks:
+
+- 📖 **[Wiki Central Portal](wiki/README.md)**: Main directory, quick-start guide, and navigation index.
+- 🎨 **[01. System Architecture & Design Standard](wiki/01-architecture-and-design.md)**: Four mission profiles, color token matrix, zero-white policy, sound engine, and phosphor cursors.
+- 🛠️ **[02. Flight Instruments & Tools Manual](wiki/02-flight-instruments-and-tools.md)**: Comprehensive manual for all 12 GUI dialogs and interactive tools.
+- ⚡ **[03. EECOM System Vitals & Automated Remediation](wiki/03-eecom-and-system-maintenance.md)**: System health scoring algorithm, SSD TRIM, orphan/pacnew wizards, and AI flight director.
+- 🔌 **[04. Theme Plugin Architecture & Update Engine](wiki/04-plugin-system-and-updates.md)**: Plugin specification, `space-theme-config` plugin manager, and update workflows.
+- 📖 **[05. Operational How-To Guides & Recipes](wiki/05-how-to-guides.md)**: Step-by-step how-to recipes for wallpapers, multi-monitors, screensavers, DNS, and AI engines.
+- 🚨 **[06. Troubleshooting & Recovery Runbook](wiki/06-troubleshooting-and-recovery.md)**: Emergency recovery with Btrfs snapshots, initramfs repair, and IPC debugging.
+
+---
+
 ## ⌨️ Flight Operations Keybinding Cheatsheet
 
 | Keybinding | Command / Action | Description |
@@ -133,10 +208,10 @@ The environment features four authentic vintage flight-deck profiles switchable 
 | `SUPER + Space` / `SUPER + R` | `dsky-launcher` | Apollo DSKY Mission Application Launcher |
 | `ALT + TAB` / `SUPER + TAB` | `space-switcher` | Apollo HUD Mission Window Switcher |
 | `SUPER + SHIFT + T` | `space-theme-switch next` | Cycle Mission Profile (NASA / CRT-Amber / CRT-Green / Kosmos-VFD) |
-| `SUPER + ALT + T` | `space-theme-config` | Visual Avionics & Theme Configurator Modal |
+| `SUPER + ALT + T` | `space-theme-config` | Visual Avionics, Theme & Plugin Configurator Modal |
 | `SUPER + ALT + W` | `space-wallpaper next` | Cycle In-Theme Historical Wallpaper |
 | `SUPER + SHIFT + R` | `space-display` | Display Radar & Multi-Monitor Console |
-| `SUPER + SHIFT + P` | `space-tools-dialog` | Mission Tools, Capture & Video Recording Studio |
+| `SUPER + SHIFT + P` | `space-tools-dialog` | Mission Tools (Capture, EECOM Vitals, Recovery & Display) |
 | `SUPER + SHIFT + C` | `space-telemetry-dialog` | System Hardware Telemetry & Task Abort Console |
 | `SUPER + SHIFT + N` | `space-network-dialog` | Communications & Wi-Fi Radar Console |
 | `SUPER + SHIFT + E` | `space-energy-dialog` | MDC-02 Power Telemetry & Energy Profiles |
