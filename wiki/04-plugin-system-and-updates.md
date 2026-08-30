@@ -23,9 +23,11 @@ graph TD
 
 ## 📸 2. GUI Plugin Manager Interface
 
-<div align="center">
-  <img src="assets/wiki_config_plugins.png" alt="GUI Plugin Manager" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![GUI Plugin Manager](assets/wiki_config_plugins.png)
+
+
 
 1. Open `space-theme-config` (`SUPER + ALT + T`).
 2. Switch to the **`[P] PLUGINS`** tab (or press key `P`).

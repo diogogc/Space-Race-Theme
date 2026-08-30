@@ -28,9 +28,11 @@ graph LR
 ```
 
 ### Tab 1: 📸 [C] AV & Mission Capture
-<div align="center">
-  <img src="assets/wiki_tools_capture.png" alt="AV & Mission Capture Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![AV & Mission Capture Tab](assets/wiki_tools_capture.png)
+
+
 
 - `[1]` **Area Screenshot**: Interactive box selection (`space-capture area`) with shutter audio and auto-save to `~/Pictures/prints`.
 - `[2]` **Fullscreen Screenshot**: Instant display capture (`space-capture full`).
@@ -39,9 +41,11 @@ graph LR
 - `[5]` **Open Videos Directory**: View recorded screen videos in `~/Videos`.
 
 #### 🎥 Video Recording Configuration Sub-View
-<div align="center">
-  <img src="assets/wiki_tools_rec.png" alt="Video Recording Configuration View" width="90%" style="border-radius: 6px; border: 1px solid #ff333355;" />
-</div>
+
+
+![Video Recording Configuration View](assets/wiki_tools_rec.png)
+
+
 
 - **Capture Region**: Toggle between `Region Selection (slurp)` and `Full Screen Display`.
 - **Audio Routing**: Toggle desktop system sounds and microphone intercom audio independently.
@@ -50,9 +54,11 @@ graph LR
 ---
 
 ### Tab 2: 🛰️ [E] EECOM Subsystems & Vitals
-<div align="center">
-  <img src="assets/wiki_tools_eecom.png" alt="EECOM Subsystems Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![EECOM Subsystems Tab](assets/wiki_tools_eecom.png)
+
+
 
 - **Live Telemetry & Health Vitals Card**: Real-time health score calculation (`100/100 [NOMINAL]`), AI Director engine status, TRIM timer state, failed systemd units, orphan packages count, pending `.pacnew` configs, root storage, and journal usage.
 - **Interactive Action Matrix**:
@@ -69,9 +75,11 @@ graph LR
 ---
 
 ### Tab 3: 🛡️ [S] System Recovery & Snapshots
-<div align="center">
-  <img src="assets/wiki_tools_system.png" alt="System Recovery Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![System Recovery Tab](assets/wiki_tools_system.png)
+
+
 
 - `[1]` **Btrfs Root Snapshot**: Creates timestamped read-only root snapshot (`/@snapshots/manual-*`).
 - `[2]` **AI Recovery Diagnostics**: Dispatches `space-ai-recovery` harness.
@@ -82,9 +90,11 @@ graph LR
 ---
 
 ### Tab 4: 📡 [D] Multi-Monitor Display Radar
-<div align="center">
-  <img src="assets/wiki_tools_display.png" alt="Display Radar Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Display Radar Tab](assets/wiki_tools_display.png)
+
+
 
 - **Live Topology Radar**: Displays detected monitors, resolutions, refresh rates, positions, and active workspaces.
 - **1-Click Topology Presets**:
@@ -111,37 +121,47 @@ graph LR
 ```
 
 ### 1. Themes Selector Tab (`[T]`)
-<div align="center">
-  <img src="assets/wiki_config_theme.png" alt="Theme Selector Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Theme Selector Tab](assets/wiki_config_theme.png)
+
+
 
 Live visual switching across NASA, CRT-Amber, CRT-Green, and Kosmos-VFD profiles.
 
 ### 2. Wallpaper Gallery Tab (`[W]`)
-<div align="center">
-  <img src="assets/wiki_config_wallpaper.png" alt="Wallpaper Gallery Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Wallpaper Gallery Tab](assets/wiki_config_wallpaper.png)
+
+
 
 Browse and apply authentic historical archival scans and photographs matching the active profile.
 
 ### 3. Screensaver Settings Tab (`[S]`)
-<div align="center">
-  <img src="assets/wiki_config_screensaver.png" alt="Screensaver Settings Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Screensaver Settings Tab](assets/wiki_config_screensaver.png)
+
+
 
 Configure idle timeouts (1m to 30m), scene modes, and Lock-on-Wake security enforcement.
 
 ### 4. Waybar Modules Tab (`[M]`)
-<div align="center">
-  <img src="assets/wiki_config_modules.png" alt="Waybar Modules Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Waybar Modules Tab](assets/wiki_config_modules.png)
+
+
 
 Toggle individual Waybar pills (MET, CPU/MEM, Power Bus, S-Band Wi-Fi, CAPCOM Audio).
 
 ### 5. Plugins Manager Tab (`[P]`)
-<div align="center">
-  <img src="assets/wiki_config_plugins.png" alt="Plugins Manager Tab" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Plugins Manager Tab](assets/wiki_config_plugins.png)
+
+
 
 Install, enable, disable, and update standalone plugins (`eecom`, `space-update`, `iss-tracker`, etc.).
 
@@ -151,9 +171,11 @@ Install, enable, disable, and update standalone plugins (`eecom`, `space-update`
 
 **Hotkeys**: `SUPER + Space` / `SUPER + R` / `dsky-launcher`
 
-<div align="center">
-  <img src="assets/wiki_dsky_launcher.png" alt="Apollo AGC DSKY Launcher" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Apollo AGC DSKY Launcher](assets/wiki_dsky_launcher.png)
+
+
 
 - Authentic MIT Apollo Guidance Computer interface with 8 mission filter groups (`Internet`, `Code`, `Terminal`, `Media`, `Graphics`, `System`, `Science`, `All`).
 - Real-time search filter and instant execution on `Enter`.
@@ -164,9 +186,11 @@ Install, enable, disable, and update standalone plugins (`eecom`, `space-update`
 
 **Hotkeys**: `ALT + TAB` / `SUPER + TAB` / `space-switcher`
 
-<div align="center">
-  <img src="assets/wiki_space_switcher.png" alt="Apollo HUD Window Switcher" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Apollo HUD Window Switcher](assets/wiki_space_switcher.png)
+
+
 
 Wayland Alt-Tab window switcher modal with live workspace badges, icons, and titles.
 
@@ -177,26 +201,33 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 **Hotkeys**: `SUPER + SHIFT + N` / Click Waybar Wi-Fi module
 
 ### 1. S-Meter Analog Receiver & Wi-Fi Station Scanner
-<div align="center">
-  <img src="assets/wiki_network_main.png" alt="Communications & S-Band Wi-Fi Radar" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Communications & S-Band Wi-Fi Radar](assets/wiki_network_main.png)
+
+
 
 - **Analog S-Meter Dial**: Cairo-rendered RF signal gauge calibrated in discrete S-Units (`S1`-`S9+30dB`).
 - **Station Scanner**: Discovered Wi-Fi networks with signal rating and encryption badges.
 
 ### 2. RF Propagation Comm Diagnostics & Ground DNS Relays
-<div align="center">
-  <img src="assets/wiki_network_test.png" alt="RF Comm Diagnostics and DNS Relays" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![RF Comm Diagnostics and DNS Relays](assets/wiki_network_test.png)
+
+
 
 - **Speed & Latency Telemetry**: Round-trip propagation ping latency, packet loss, download speed, and upload throughput.
 - **Persistent DNS Selector**: One-click DNS engagement (Cloudflare, Quad9, Google, AdGuard, DHCP) across all network profiles.
 
 ### 3. Encrypted VPN Tunnel Dispatch & Bluetooth Manager
-<div align="center">
-  <img src="assets/wiki_network_vpn.png" alt="VPN Tunnel Dispatch" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-  <img src="assets/wiki_network_bluetooth.png" alt="Bluetooth Subsystem" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![VPN Tunnel Dispatch](assets/wiki_network_vpn.png)
+
+![Bluetooth Subsystem](assets/wiki_network_bluetooth.png)
+
+
 
 - **VPN Hub**: OpenVPN and WireGuard encrypted connection dispatch and configuration editor.
 - **Bluetooth Avionics**: Nearby device discovery, pair, trust, and connection toggles.
@@ -207,9 +238,11 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 **Hotkeys**: `SUPER + SHIFT + E` / Click Waybar Battery module
 
-<div align="center">
-  <img src="assets/wiki_energy_dialog.png" alt="MDC-02 Main Power Bus Telemetry" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![MDC-02 Main Power Bus Telemetry](assets/wiki_energy_dialog.png)
+
+
 
 - **Apollo Edgewise Needle Meters**: `DC MAIN BUS A` (Capacity %), `DC BUS VOLTS` (VDC Potential), and `DC MAIN BUS B` (Discharge Watts).
 - **Flight Power Modes**: Emergency (Power Save), Coasting (Balanced), Orbit Maneuver (Performance).
@@ -221,9 +254,11 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 **Hotkeys**: `SUPER + SHIFT + C` / Click Waybar Telemetry module
 
-<div align="center">
-  <img src="assets/wiki_telemetry_dialog.png" alt="Hardware Telemetry Console" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Hardware Telemetry Console](assets/wiki_telemetry_dialog.png)
+
+
 
 - Segmented LED CPU utilization meter and per-core thread indicators.
 - AGC memory allocation meter and filesystem data recorders.
@@ -235,9 +270,11 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 **Hotkeys**: `SUPER + SHIFT + V` / Click Waybar Audio module
 
-<div align="center">
-  <img src="assets/wiki_capcom_dialog.png" alt="CAPCOM Audio Intercom" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![CAPCOM Audio Intercom](assets/wiki_capcom_dialog.png)
+
+
 
 - Dual real-time VU audio meters with peak hold bars.
 - WirePlumber default input/output sink selectors and Quindar audio test tones.
@@ -248,9 +285,11 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 **Hotkeys**: Waybar ISS pill / `space-iss-dialog`
 
-<div align="center">
-  <img src="assets/wiki_iss_dialog.png" alt="ISS Real-Time Orbital Tracker" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![ISS Real-Time Orbital Tracker](assets/wiki_iss_dialog.png)
+
+
 
 - Live ISS orbital tracking coordinates, altitude, velocity, and astronaut crew roster.
 
@@ -258,10 +297,13 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 ## 🧭 10. Keybinding Flight Directory & Abort Menu
 
-<div align="center">
-  <img src="assets/wiki_keybinds.png" alt="Keybinding Flight Guide" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-  <img src="assets/wiki_power_menu.png" alt="Flight Abort Power Menu" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![Keybinding Flight Guide](assets/wiki_keybinds.png)
+
+![Flight Abort Power Menu](assets/wiki_power_menu.png)
+
+
 
 - **Keybinding Directory (`space-keybinds`)**: Searchable flight control cheatsheet (`SUPER + SHIFT + K`).
 - **Emergency Flight Abort (`space-power-menu`)**: Clean session logout, reboot, shutdown, lock (`SUPER + SHIFT + M` / `ESC`).

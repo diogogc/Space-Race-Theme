@@ -31,9 +31,11 @@ graph TD
 ## 📸 2. EECOM Visual Telemetry & Interfaces
 
 ### 🛰️ GUI Telemetry Console (`space-tools-dialog eecom`)
-<div align="center">
-  <img src="assets/wiki_tools_eecom.png" alt="EECOM GUI Console" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![EECOM GUI Console](assets/wiki_tools_eecom.png)
+
+
 
 - **Live Telemetry & Vitals Status Card**: Health score calculation, AI Director engine status, TRIM timer state, failed units, orphan packages, pacnew configs, root disk space, and journal usage.
 - **Interactive Action Matrix**: 1-click execution for scans, auto-remediation, TRIM discard, orphan removal, pacnew wizards, cache pruning, and audit note exporting.
@@ -41,10 +43,13 @@ graph TD
 ---
 
 ### 💻 Standalone Terminal Diagnostic Suite (`eecom --scan` / `eecom --menu`)
-<div align="center">
-  <img src="assets/wiki_eecom_tui.png" alt="EECOM Terminal Diagnostic Scan" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-  <img src="assets/wiki_eecom_menu.png" alt="EECOM Interactive Maintenance Menu" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-</div>
+
+
+![EECOM Terminal Diagnostic Scan](assets/wiki_eecom_tui.png)
+
+![EECOM Interactive Maintenance Menu](assets/wiki_eecom_menu.png)
+
+
 
 - **Diagnostic Scan (`eecom --scan`)**: Real-time animated progress bars during subsystem audits, async phosphor spinners during disk-intensive and AI operations, and color-coded health score index (`[✔] NOMINAL`, `[▲] ADVISORY`, `[✖] CRITICAL`).
 - **Interactive Maintenance Console (`eecom --menu`)**: Numbered menu for on-demand SSD TRIM, package orphan purging, `.pacnew` reconciliation, cache cleanup, and journal vacuuming.
