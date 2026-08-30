@@ -263,8 +263,9 @@ hl.config({
 
 hl.config({
     misc = {
-        force_default_wallpaper = 0,    -- 0 disables the default mascot wallpapers
-        disable_hyprland_logo   = true, -- Disables the random hyprland logo / fallback anime background
+        force_default_wallpaper  = 0,    -- 0 disables the default mascot wallpapers
+        disable_hyprland_logo    = true, -- Disables the random hyprland logo / fallback anime background
+        disable_splash_rendering = true, -- Disables the random splash phrases at the bottom of the screen
     },
 })
 
