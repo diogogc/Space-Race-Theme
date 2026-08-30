@@ -6,10 +6,15 @@
 [![Arch Linux](https://img.shields.io/badge/Arch_Linux-1793D1?style=for-the-badge&logo=arch-linux&logoColor=white)](https://archlinux.org)
 [![Hyprland](https://img.shields.io/badge/Hyprland-0.56+-00f0d0?style=for-the-badge&logo=wayland&logoColor=black)](https://hyprland.org)
 [![Wayland](https://img.shields.io/badge/Wayland-Native-ff7b00?style=for-the-badge&logo=linux&logoColor=white)](https://wayland.freedesktop.org)
+[![Wiki Documentation](https://img.shields.io/badge/Wiki-Flight_Manual-ffb000?style=for-the-badge&logo=gitbook&logoColor=black)](wiki/README.md)
 [![Zero White Policy](https://img.shields.io/badge/Zero--White--BG-Enforced-33ff33?style=for-the-badge&logo=visualstudiocode&logoColor=black)](https://github.com/diogogc/Space-Race-Theme)
 
 **An authentic, retro-futuristic Linux Wayland desktop environment inspired by the historic 1960s Space Race.**  
 *Engineered for Hyprland, Waybar, Ghostty, Kitty, Dunst, Hyprlock, and custom GTK3/Cairo flight telemetry dialogs.*
+
+<br/>
+
+📖 **[Read the Full Documentation & Flight Manual in the Theme Wiki ➔](wiki/README.md)**
 
 <br/>
 
