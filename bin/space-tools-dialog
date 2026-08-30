@@ -3,8 +3,9 @@
 Apollo Mission Control Operations & Tools Console
 Provides interactive tabbed GUI panel for:
   1) AV & Mission Capture (Screenshots, Screen Video Recording, Audio/Keystroke toggles, Media Access)
-  2) System Tools & Recovery (Btrfs Snapshots, Opt-In Autonomous Recovery, Multi-Engine AI Diagnostics)
-  3) Multi-Monitor Display Radar (Live topology, Extend, Mirror, Solo, Docked presets)
+  2) EECOM System Vitals (SSD TRIM, Orphan Cleaner, Pacnew Wizard, Log Vacuum, AI Diagnostics)
+  3) System Tools & Recovery (Btrfs Snapshots, Opt-In Autonomous Recovery, Multi-Engine AI Diagnostics)
+  4) Multi-Monitor Display Radar (Live topology, Extend, Mirror, Solo, Docked presets)
 Strict dark chassis & zero-white-background theme adherence across all 4 mission profiles.
 """
 import sys
@@ -196,15 +197,16 @@ class SpaceToolsDialog(Gtk.Window):
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_default_size(660, 580)
+        self.set_default_size(680, 640)
 
         self.theme_name = get_theme_name()
         self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
 
         # Navigation State
-        self.active_tab = initial_tab  # "capture", "system", "display"
+        self.active_tab = initial_tab  # "capture", "eecom", "system", "display"
         self.current_view = initial_view  # "main", "rec"
         self.capture_selected_idx = 0
+        self.eecom_selected_idx = 0
         self.rec_selected_idx = 0
         self.system_selected_idx = 0
         self.display_selected_idx = 0
@@ -217,6 +219,7 @@ class SpaceToolsDialog(Gtk.Window):
 
         # Widget registries
         self.capture_buttons = []
+        self.eecom_buttons = []
         self.rec_ctrl_items = []
         self.system_buttons = []
         self.display_buttons = []
@@ -225,7 +228,9 @@ class SpaceToolsDialog(Gtk.Window):
         self.build_ui()
         self.connect("key-press-event", self.on_key_press)
 
-        if initial_tab == "system":
+        if initial_tab in ["eecom", "vitals", "health", "scan", "trim", "fix"]:
+            self.switch_tab("eecom")
+        elif initial_tab in ["system", "recovery"]:
             self.switch_tab("system")
         elif initial_tab in ["display", "monitors"]:
             self.switch_tab("display")
@@ -360,7 +365,7 @@ class SpaceToolsDialog(Gtk.Window):
         header.pack_start(sub, False, False, 0)
         root_vbox.pack_start(header, False, False, 0)
 
-        # 2. Navigation Tab Bar (3 Tabs)
+        # 2. Navigation Tab Bar (4 Tabs)
         tab_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tab_bar.get_style_context().add_class("tab-bar")
 
@@ -372,7 +377,15 @@ class SpaceToolsDialog(Gtk.Window):
         self.tab_capture.connect("button-press-event", lambda w, e: self.switch_tab("capture"))
         tab_bar.pack_start(self.tab_capture, False, False, 0)
 
-        # Tab 2: System Tools & Recovery
+        # Tab 2: EECOM Vitals & Remediation
+        self.tab_eecom = Gtk.EventBox()
+        self.tab_eecom.get_style_context().add_class("nav-tab")
+        self.lbl_tab_eecom = Gtk.Label()
+        self.tab_eecom.add(self.lbl_tab_eecom)
+        self.tab_eecom.connect("button-press-event", lambda w, e: self.switch_tab("eecom"))
+        tab_bar.pack_start(self.tab_eecom, False, False, 0)
+
+        # Tab 3: System Tools & Recovery
         self.tab_system = Gtk.EventBox()
         self.tab_system.get_style_context().add_class("nav-tab")
         self.lbl_tab_system = Gtk.Label()
@@ -380,7 +393,7 @@ class SpaceToolsDialog(Gtk.Window):
         self.tab_system.connect("button-press-event", lambda w, e: self.switch_tab("system"))
         tab_bar.pack_start(self.tab_system, False, False, 0)
 
-        # Tab 3: Multi-Monitor Display Radar
+        # Tab 4: Multi-Monitor Display Radar
         self.tab_display = Gtk.EventBox()
         self.tab_display.get_style_context().add_class("nav-tab")
         self.lbl_tab_display = Gtk.Label()
@@ -398,6 +411,7 @@ class SpaceToolsDialog(Gtk.Window):
 
         # Build Tab Pages
         self.build_capture_tab()
+        self.build_eecom_tab()
         self.build_rec_view()
         self.build_system_tab()
         self.build_display_tab()
@@ -419,27 +433,38 @@ class SpaceToolsDialog(Gtk.Window):
     def update_tab_headers(self):
         # Reset classes
         self.tab_capture.get_style_context().remove_class("active")
+        self.tab_eecom.get_style_context().remove_class("active")
         self.tab_system.get_style_context().remove_class("active")
         self.tab_display.get_style_context().remove_class("active")
 
         if self.active_tab == "capture":
             self.tab_capture.get_style_context().add_class("active")
-            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📸 [C] AV &amp; CAPTURE</span>")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📸 [C] CAPTURE</span>")
+            self.lbl_tab_eecom.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [E] EECOM</span>")
             self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] RECOVERY</span>")
-            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [D] DISPLAY</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / S / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📡 [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / E / S / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-5 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+        elif self.active_tab == "eecom":
+            self.tab_eecom.get_style_context().add_class("active")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] CAPTURE</span>")
+            self.lbl_tab_eecom.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛰️ [E] EECOM</span>")
+            self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] RECOVERY</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📡 [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / S / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-9 / ENTER ] RUN   [ R ] REFRESH   [ ESC ] CLOSE</span>")
         elif self.active_tab == "system":
             self.tab_system.get_style_context().add_class("active")
-            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] AV &amp; CAPTURE</span>")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] CAPTURE</span>")
+            self.lbl_tab_eecom.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [E] EECOM</span>")
             self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛡️ [S] RECOVERY</span>")
-            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [D] DISPLAY</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] RUN   [ ESC ] CLOSE</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📡 [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / E / D ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] RUN   [ ESC ] CLOSE</span>")
         elif self.active_tab == "display":
             self.tab_display.get_style_context().add_class("active")
-            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] AV &amp; CAPTURE</span>")
+            self.lbl_tab_capture.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>📸 [C] CAPTURE</span>")
+            self.lbl_tab_eecom.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛰️ [E] EECOM</span>")
             self.lbl_tab_system.set_markup(f"<span font_weight='bold' foreground='{self.pal['text_dim']}'>🛡️ [S] RECOVERY</span>")
-            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>🛰️ [D] DISPLAY</span>")
-            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] APPLY   [ ESC ] CLOSE</span>")
+            self.lbl_tab_display.set_markup(f"<span font_weight='bold' foreground='{self.pal['accent']}'>📡 [D] DISPLAY</span>")
+            self.lbl_footer.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>[ TAB / C / E / S ] SWITCH TAB   [ ↑/↓ ] NAVIGATE   [ 1-6 / ENTER ] APPLY   [ ESC ] CLOSE</span>")
 
     def build_capture_tab(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
@@ -515,6 +540,123 @@ class SpaceToolsDialog(Gtk.Window):
             vbox.pack_start(btn, False, False, 0)
 
         self.stack.add_named(vbox, "capture")
+
+    def build_eecom_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+        vbox.set_margin_left(16)
+        vbox.set_margin_right(16)
+
+        # 1. EECOM Telemetry Summary Card
+        eecom_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        eecom_card.get_style_context().add_class("card-panel")
+
+        self.lbl_eecom_telemetry = Gtk.Label()
+        self.lbl_eecom_telemetry.set_xalign(0.0)
+        eecom_card.pack_start(self.lbl_eecom_telemetry, False, False, 0)
+        vbox.pack_start(eecom_card, False, False, 0)
+
+        # 2. Dynamic EECOM Tools & Actions List
+        self.eecom_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        vbox.pack_start(self.eecom_container, True, True, 0)
+
+        self.populate_eecom_tool_rows()
+        self.stack.add_named(vbox, "eecom")
+
+    def populate_eecom_tool_rows(self):
+        for child in self.eecom_container.get_children():
+            self.eecom_container.remove(child)
+
+        ai_engine = get_ai_engine().upper()
+
+        self.eecom_tool_items = [
+            {
+                "key": "1",
+                "title": "🩺 RUN FULL EECOM HEALTH DIAGNOSTIC",
+                "sub": "Execute complete subsystem scan with visual progress bar & stability scoring",
+                "action": "eecom_scan"
+            },
+            {
+                "key": "2",
+                "title": "🔧 GUIDED AUTO-REMEDIATION SEQUENCE",
+                "sub": "Interactive safe maintenance with item previews & confirmation before every step",
+                "action": "eecom_fix"
+            },
+            {
+                "key": "3",
+                "title": "⚡ SSD / NVMe TRIM DISCARD ROUTINE",
+                "sub": "Issue on-demand filesystem discard across all active NVMe & SATA SSD blocks",
+                "action": "eecom_trim"
+            },
+            {
+                "key": "4",
+                "title": "📦 INSPECT & PURGE ORPHANED PACKAGES",
+                "sub": "Safely identify and remove unneeded dependencies (pacman -Qdtq)",
+                "action": "eecom_orphans"
+            },
+            {
+                "key": "5",
+                "title": "📝 RECONCILE PENDING .PACNEW CONFIGS",
+                "sub": "Interactive wizard to keep, overwrite, diff or merge pending .pacnew files",
+                "action": "eecom_pacnew"
+            },
+            {
+                "key": "6",
+                "title": "🧹 OPTIMIZE PACMAN CACHE & PRUNE OLD",
+                "sub": "Clean package cache (paccache -r), retaining last 2 versions for rollbacks",
+                "action": "eecom_cache"
+            },
+            {
+                "key": "7",
+                "title": "📜 AUDIT & VACUUM OVERSIZED LOGS",
+                "sub": "Check journal storage usage and safely vacuum systemd journal logs",
+                "action": "eecom_logs"
+            },
+            {
+                "key": "8",
+                "title": f"🤖 CONSULT APOLLO AI FLIGHT DIRECTOR ({ai_engine})",
+                "sub": "Dispatch AI telemetry analysis with live spinner & ANSI markdown formatting",
+                "action": "eecom_ai"
+            },
+            {
+                "key": "9",
+                "title": "📋 EXPORT HEALTH AUDIT TO SYS-MEM",
+                "sub": "Generate formatted markdown audit note in ~/sys-mem/sys_mem/system/",
+                "action": "eecom_audit"
+            }
+        ]
+
+        self.eecom_buttons = []
+        for i, item in enumerate(self.eecom_tool_items):
+            btn = Gtk.EventBox()
+            btn.get_style_context().add_class("tool-row")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn.add(row_box)
+
+            badge = Gtk.Label()
+            badge.set_markup(f"<span font_weight='bold' font_size='10000' foreground='{self.pal['accent']}'>[{item['key']}]</span>")
+            row_box.pack_start(badge, False, False, 0)
+
+            text_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            row_box.pack_start(text_vbox, True, True, 0)
+
+            t_lbl = Gtk.Label()
+            t_lbl.set_markup(f"<span font_weight='bold' font_size='8800' foreground='{self.pal['text_main']}'>{GLib.markup_escape_text(item['title'])}</span>")
+            t_lbl.set_xalign(0.0)
+            text_vbox.pack_start(t_lbl, False, False, 0)
+
+            s_lbl = Gtk.Label()
+            s_lbl.set_markup(f"<span font_size='7800' foreground='{self.pal['text_dim']}'>{GLib.markup_escape_text(item['sub'])}</span>")
+            s_lbl.set_xalign(0.0)
+            text_vbox.pack_start(s_lbl, False, False, 0)
+
+            btn.connect("button-press-event", lambda w, e, idx=i: self.trigger_eecom_action(idx))
+            self.eecom_buttons.append(btn)
+            self.eecom_container.pack_start(btn, False, False, 0)
+
+        self.eecom_container.show_all()
 
     def build_rec_view(self):
         rec_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -907,6 +1049,103 @@ class SpaceToolsDialog(Gtk.Window):
         )
         self.lbl_health_telemetry.set_markup(markup)
 
+    def refresh_eecom_telemetry(self):
+        # fstrim.timer check
+        try:
+            trim_timer_active = (subprocess.check_output(["systemctl", "is-active", "fstrim.timer"], text=True, stderr=subprocess.DEVNULL).strip() == "active")
+        except Exception:
+            trim_timer_active = False
+        trim_badge = f"<span foreground='{self.pal['green']}'>ACTIVE</span>" if trim_timer_active else f"<span foreground='{self.pal['red']}'>INACTIVE</span>"
+
+        # Failed units
+        try:
+            out = subprocess.check_output(["systemctl", "--failed", "--no-legend", "--plain"], text=True, stderr=subprocess.DEVNULL)
+            failed_count = len([line for line in out.splitlines() if line.strip()])
+        except Exception:
+            failed_count = 0
+        failed_badge = f"<span foreground='{self.pal['green']}'>0 Failed</span>" if failed_count == 0 else f"<span foreground='{self.pal['red']}'>{failed_count} Failed</span>"
+
+        # Orphan count
+        try:
+            out = subprocess.check_output(["pacman", "-Qdtq"], text=True, stderr=subprocess.DEVNULL)
+            orphan_count = len([x for x in out.splitlines() if x.strip()])
+        except Exception:
+            orphan_count = 0
+        orphan_badge = f"<span foreground='{self.pal['green']}'>0 Clean</span>" if orphan_count == 0 else f"<span foreground='{self.pal['accent']}'>{orphan_count} Pending</span>"
+
+        # Pacnew count
+        pacnew_count = 0
+        try:
+            if shutil.which("pacdiff"):
+                p_out = subprocess.check_output(["pacdiff", "-o"], text=True, stderr=subprocess.DEVNULL)
+                pacnew_count = len([x for x in p_out.splitlines() if x.strip()])
+            else:
+                p_out = subprocess.check_output(["find", "/etc", "-maxdepth", "3", "-name", "*.pacnew"], text=True, stderr=subprocess.DEVNULL)
+                pacnew_count = len([x for x in p_out.splitlines() if x.strip()])
+        except Exception:
+            pacnew_count = 0
+        pacnew_badge = f"<span foreground='{self.pal['green']}'>0 Clean</span>" if pacnew_count == 0 else f"<span foreground='{self.pal['accent']}'>{pacnew_count} Pending</span>"
+
+        # Journal usage
+        journal_str = "Nominal"
+        try:
+            j_out = subprocess.check_output(["journalctl", "--disk-usage"], text=True, stderr=subprocess.DEVNULL).strip()
+            if "take up " in j_out:
+                journal_str = j_out.split("take up ")[-1].split(" on disk")[0]
+        except Exception:
+            pass
+
+        # Root disk
+        disk_str = "Nominal"
+        try:
+            st = os.statvfs("/")
+            free_gb = (st.f_bavail * st.f_frsize) / (1024 * 1024 * 1024)
+            total_gb = (st.f_blocks * st.f_frsize) / (1024 * 1024 * 1024)
+            used_pct = int(((total_gb - free_gb) / total_gb) * 100)
+            disk_str = f"{used_pct}% ({int(free_gb)}GB free)"
+        except Exception:
+            pass
+
+        # Overall Score calculation
+        score = 100
+        if failed_count > 0:
+            score -= (failed_count * 15)
+        if not trim_timer_active:
+            score -= 10
+        if orphan_count > 0:
+            score -= min(15, orphan_count * 2)
+        if pacnew_count > 0:
+            score -= min(15, pacnew_count * 5)
+        score = max(0, min(100, score))
+
+        if score >= 90:
+            score_badge = f"<span foreground='{self.pal['green']}' font_weight='bold'>{score}/100 [NOMINAL]</span>"
+        elif score >= 70:
+            score_badge = f"<span foreground='{self.pal['accent']}' font_weight='bold'>{score}/100 [ADVISORY]</span>"
+        else:
+            score_badge = f"<span foreground='{self.pal['red']}' font_weight='bold'>{score}/100 [CRITICAL]</span>"
+
+        ai_engine = get_ai_engine().upper()
+
+        markup = (
+            f"<span font_weight='bold' foreground='{self.pal['text_main']}'>🛰️ ELECTRICAL, ENVIRONMENTAL &amp; CONSUMABLES (EECOM)</span>\n"
+            f"<span font_size='8200' foreground='{self.pal['text_sub']}'>"
+            f"• <b>Health Index:</b> {score_badge}  |  <b>AI Director:</b> <span foreground='{self.pal['cyan']}'>{ai_engine}</span>  |  <b>TRIM Timer:</b> {trim_badge}\n"
+            f"• <b>Units:</b> {failed_badge}  |  <b>Orphans:</b> {orphan_badge}  |  <b>Pacnew:</b> {pacnew_badge}  |  <b>Root:</b> {disk_str} ({journal_str} logs)"
+            f"</span>"
+        )
+        self.lbl_eecom_telemetry.set_markup(markup)
+
+    def refresh_eecom_ui(self):
+        self.populate_eecom_tool_rows()
+        self.refresh_eecom_telemetry()
+        for i, btn in enumerate(self.eecom_buttons):
+            ctx = btn.get_style_context()
+            if i == self.eecom_selected_idx:
+                ctx.add_class("selected")
+            else:
+                ctx.remove_class("selected")
+
     def refresh_capture_ui(self):
         rec_active = is_recording_active()
         for i, btn in enumerate(self.capture_buttons):
@@ -993,6 +1232,9 @@ class SpaceToolsDialog(Gtk.Window):
         if tab_name == "capture":
             self.refresh_capture_ui()
             self.stack.set_visible_child_name("capture")
+        elif tab_name == "eecom":
+            self.refresh_eecom_ui()
+            self.stack.set_visible_child_name("eecom")
         elif tab_name == "system":
             self.refresh_system_ui()
             self.stack.set_visible_child_name("system")
@@ -1065,6 +1307,58 @@ class SpaceToolsDialog(Gtk.Window):
             v_dir = os.path.expanduser("~/Videos")
             os.makedirs(v_dir, exist_ok=True)
             subprocess.Popen(["xdg-open", v_dir], start_new_session=True)
+            Gtk.main_quit()
+
+    def trigger_eecom_action(self, idx):
+        item = self.eecom_tool_items[idx]
+        action = item["action"]
+
+        if action == "eecom_scan":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --scan", title="EECOM Subsystem Health Diagnostic")
+            Gtk.main_quit()
+        elif action == "eecom_fix":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --fix", title="EECOM Guided Remediation")
+            Gtk.main_quit()
+        elif action == "eecom_trim":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --trim", title="EECOM SSD TRIM Routine")
+            Gtk.main_quit()
+        elif action == "eecom_orphans":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --orphans", title="EECOM Orphan Package Cleaner")
+            Gtk.main_quit()
+        elif action == "eecom_pacnew":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --pacnew", title="EECOM Pacnew Wizard")
+            Gtk.main_quit()
+        elif action == "eecom_cache":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --clean-cache", title="EECOM Pacman Cache Optimizer")
+            Gtk.main_quit()
+        elif action == "eecom_logs":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --vacuum-logs", title="EECOM Journal Vacuum")
+            Gtk.main_quit()
+        elif action == "eecom_ai":
+            self.hide()
+            cleanup()
+            launch_in_terminal("space-eecom --ai", title="Apollo AI Flight Director")
+            Gtk.main_quit()
+        elif action == "eecom_audit":
+            self.hide()
+            cleanup()
+            subprocess.run(["space-eecom", "--audit"], capture_output=True)
+            if shutil.which("notify-send"):
+                subprocess.Popen(["notify-send", "-a", "Apollo EECOM", "📋 Health Audit Exported", "Saved structured audit to sys-mem vault."], start_new_session=True)
             Gtk.main_quit()
 
     def trigger_system_action(self, idx):
@@ -1190,6 +1484,9 @@ class SpaceToolsDialog(Gtk.Window):
         if keyname in ["c", "C"] and self.current_view != "rec":
             self.switch_tab("capture")
             return True
+        if keyname in ["e", "E"] and self.current_view != "rec":
+            self.switch_tab("eecom")
+            return True
         if keyname in ["s", "S"] and self.current_view != "rec":
             self.switch_tab("system")
             return True
@@ -1208,7 +1505,7 @@ class SpaceToolsDialog(Gtk.Window):
                 self.refresh_capture_ui()
                 return True
             if keyname in ["Tab"]:
-                self.switch_tab("system")
+                self.switch_tab("eecom")
                 return True
             if keyname in ["ISO_Left_Tab"]:
                 self.switch_tab("display")
@@ -1220,6 +1517,35 @@ class SpaceToolsDialog(Gtk.Window):
                 idx = int(keyname) - 1
                 if 0 <= idx < len(self.capture_tool_items):
                     self.trigger_capture_action(idx)
+                    return True
+            return False
+
+        # EECOM Tab Navigation
+        elif self.active_tab == "eecom" and self.current_view == "main":
+            if keyname in ["Down", "j", "J"]:
+                self.eecom_selected_idx = (self.eecom_selected_idx + 1) % len(self.eecom_tool_items)
+                self.refresh_eecom_ui()
+                return True
+            if keyname in ["Up", "k", "K"]:
+                self.eecom_selected_idx = (self.eecom_selected_idx - 1 + len(self.eecom_tool_items)) % len(self.eecom_tool_items)
+                self.refresh_eecom_ui()
+                return True
+            if keyname in ["Tab"]:
+                self.switch_tab("system")
+                return True
+            if keyname in ["ISO_Left_Tab"]:
+                self.switch_tab("capture")
+                return True
+            if keyname in ["r", "R"]:
+                self.refresh_eecom_ui()
+                return True
+            if keyname in ["Return", "KP_Enter", "space"]:
+                self.trigger_eecom_action(self.eecom_selected_idx)
+                return True
+            if keyname in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]:
+                idx = int(keyname) - 1
+                if 0 <= idx < len(self.eecom_tool_items):
+                    self.trigger_eecom_action(idx)
                     return True
             return False
 
@@ -1237,7 +1563,7 @@ class SpaceToolsDialog(Gtk.Window):
                 self.switch_tab("display")
                 return True
             if keyname in ["ISO_Left_Tab"]:
-                self.switch_tab("capture")
+                self.switch_tab("eecom")
                 return True
             if keyname in ["Return", "KP_Enter", "space"]:
                 self.trigger_system_action(self.system_selected_idx)
@@ -1369,7 +1695,9 @@ def main():
 
     if len(sys.argv) > 1:
         arg = sys.argv[1].lower()
-        if arg in ["system", "recovery", "health"]:
+        if arg in ["eecom", "vitals", "health", "scan", "trim", "fix"]:
+            init_tab = "eecom"
+        elif arg in ["system", "recovery"]:
             init_tab = "system"
         elif arg in ["display", "monitors", "radar"]:
             init_tab = "display"

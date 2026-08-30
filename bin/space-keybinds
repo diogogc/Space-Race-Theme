@@ -27,7 +27,7 @@ KEYBINDINGS = [
     {"keys": "PrtScn",            "desc": "Area Screenshot (Select & Copy) → ~/Pictures/prints", "category": "CAPTURE", "cmd": "space-capture area"},
     {"keys": "Ctrl + PrtScn",     "desc": "Fullscreen Screenshot (Capture Display & Copy)",      "category": "CAPTURE", "cmd": "space-capture full"},
     {"keys": "Shift + PrtScn",    "desc": "Screen Video Recorder (Audio & Keystroke Toggles)",   "category": "CAPTURE", "cmd": "space-tools-dialog rec"},
-    {"keys": "SUPER + SHIFT + P", "desc": "Mission Capture & Tools Console",                    "category": "TOOLS",   "cmd": "space-tools-dialog"},
+    {"keys": "SUPER + SHIFT + P", "desc": "Mission Tools (Capture, EECOM Vitals, Recovery & Display)", "category": "TOOLS",   "cmd": "space-tools-dialog"},
     {"keys": "SUPER + SPACE",     "desc": "Launch Application (Apollo DSKY AGC)",       "category": "LAUNCHER", "cmd": "dsky-launcher"},
     {"keys": "SUPER + SHIFT + T", "desc": "Cycle Mission Theme (NASA / CRT / Kosmos)", "category": "THEME",    "cmd": "space-theme-switch next"},
     {"keys": "SUPER + SHIFT + K", "desc": "Keybinding Guide & Flight Cheatsheet",      "category": "GUIDE",    "cmd": "space-keybinds"},
