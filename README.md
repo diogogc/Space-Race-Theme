@@ -7,7 +7,6 @@
 [![Hyprland](https://img.shields.io/badge/Hyprland-0.56+-00f0d0?style=for-the-badge&logo=wayland&logoColor=black)](https://hyprland.org)
 [![Wayland](https://img.shields.io/badge/Wayland-Native-ff7b00?style=for-the-badge&logo=linux&logoColor=white)](https://wayland.freedesktop.org)
 [![Wiki Documentation](https://img.shields.io/badge/Wiki-Flight_Manual-ffb000?style=for-the-badge&logo=gitbook&logoColor=black)](wiki/README.md)
-[![Zero White Policy](https://img.shields.io/badge/Zero--White--BG-Enforced-33ff33?style=for-the-badge&logo=visualstudiocode&logoColor=black)](https://github.com/diogogc/Space-Race-Theme)
 
 **An authentic, retro-futuristic Linux Wayland desktop environment inspired by the historic 1960s Space Race.**  
 *Engineered for Hyprland, Waybar, Ghostty, Kitty, Dunst, Hyprlock, and custom GTK3/Cairo flight telemetry dialogs.*
@@ -127,15 +126,12 @@ The environment features four authentic vintage flight-deck profiles switchable 
 5. **8-Bit Retro Space Screensaver (`space-screensaver`)**:
    - Nearest-neighbor $480 \times 270$ retro pixel scaling.
    - 5 historical narrative flight scenes: *Arch Linux Recon*, *NASA Meatball*, *Apollo 11 Moon Landing*, *Interkosmos*, and *Vostok 1 Yuri Gagarin Mission*.
-6. **Strict Zero-White-Background Policy**: Eliminates blinding flashes across all dialogs, popups, menus, and tools.
-
----
 
 ---
 
 ## 🛠️ Flight Instruments & Mission Tools Suite
 
-The environment includes a rich suite of native Python GTK3/Cairo avionics instruments, telemetry daemons, and system utilities designed with a strict zero-white-background policy:
+The environment includes a rich suite of native Python GTK3/Cairo avionics instruments, telemetry daemons, and system utilities:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -197,7 +193,7 @@ The environment includes a rich suite of native Python GTK3/Cairo avionics instr
 The repository includes a complete, modular documentation wiki covering design architecture, avionics instruments, maintenance suites, and recovery runbooks:
 
 - 📖 **[Wiki Central Portal](wiki/README.md)**: Main directory, quick-start guide, and navigation index.
-- 🎨 **[01. System Architecture & Design Standard](wiki/01-architecture-and-design.md)**: Four mission profiles, color token matrix, zero-white policy, sound engine, and phosphor cursors.
+- 🎨 **[01. System Architecture & Design Standard](wiki/01-architecture-and-design.md)**: Four mission profiles, unified color token matrix, sound engine, and phosphor cursors.
 - 🛠️ **[02. Flight Instruments & Tools Manual](wiki/02-flight-instruments-and-tools.md)**: Comprehensive manual for all 12 GUI dialogs and interactive tools.
 - ⚡ **[03. EECOM System Vitals & Automated Remediation](wiki/03-eecom-and-system-maintenance.md)**: System health scoring algorithm, SSD TRIM, orphan/pacnew wizards, and AI flight director.
 - 🔌 **[04. Theme Plugin Architecture & Update Engine](wiki/04-plugin-system-and-updates.md)**: Plugin specification, `space-theme-config` plugin manager, and update workflows.
