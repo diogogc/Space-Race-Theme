@@ -145,7 +145,7 @@ ALL_THEME_PLUGINS = [
         "id": "eecom",
         "name": "Apollo EECOM Doctor",
         "desc": "System health diagnostics, SSD TRIM, and AI remediation suite",
-        "bins": ["eecom", "space-eecom", "eecon"],
+        "bins": ["eecom", "space-eecom"],
         "src": "space-eecom",
         "category": "Diagnostics",
     },
@@ -264,13 +264,14 @@ def save_screensaver_config(cfg):
 
 class SpaceThemeConfigDialog(Gtk.Window):
     def __init__(self, initial_tab="theme"):
+        GLib.set_prgname("space-theme-config")
+        GLib.set_application_name("Apollo Theme & Visual Avionics Configurator")
         super().__init__(title="Apollo Theme & Visual Avionics Configurator")
-        self.set_wmclass("space-theme-config", "space-theme-config")
         self.set_role("dialog")
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_default_size(720, 620)
+        self.set_default_size(740, 640)
 
         self.current_theme = get_current_theme()
         self.pal = THEMES.get(self.current_theme, THEMES["nasa"])
@@ -549,8 +550,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         footer.set_margin_top(4)
         footer.set_margin_bottom(8)
-        footer.set_margin_left(16)
-        footer.set_margin_right(16)
+        footer.set_margin_start(16)
+        footer.set_margin_end(16)
 
         self.lbl_footer = Gtk.Label()
         self.lbl_footer.set_xalign(0.5)
@@ -622,8 +623,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         vbox.set_margin_top(12)
         vbox.set_margin_bottom(12)
-        vbox.set_margin_left(16)
-        vbox.set_margin_right(16)
+        vbox.set_margin_start(16)
+        vbox.set_margin_end(16)
 
         grid = Gtk.Grid()
         grid.set_column_spacing(10)
@@ -694,8 +695,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         vbox.set_margin_top(8)
         vbox.set_margin_bottom(8)
-        vbox.set_margin_left(16)
-        vbox.set_margin_right(16)
+        vbox.set_margin_start(16)
+        vbox.set_margin_end(16)
 
         # Header card with cycler action
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -781,8 +782,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         vbox.set_margin_top(8)
         vbox.set_margin_bottom(8)
-        vbox.set_margin_left(16)
-        vbox.set_margin_right(16)
+        vbox.set_margin_start(16)
+        vbox.set_margin_end(16)
 
         # Header card with preview action
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -927,8 +928,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         vbox.set_margin_top(8)
         vbox.set_margin_bottom(8)
-        vbox.set_margin_left(16)
-        vbox.set_margin_right(16)
+        vbox.set_margin_start(16)
+        vbox.set_margin_end(16)
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         card.get_style_context().add_class("card-panel")
@@ -1039,8 +1040,8 @@ class SpaceThemeConfigDialog(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         vbox.set_margin_top(8)
         vbox.set_margin_bottom(8)
-        vbox.set_margin_left(16)
-        vbox.set_margin_right(16)
+        vbox.set_margin_start(16)
+        vbox.set_margin_end(16)
 
         # Header card with Sync All Action
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
