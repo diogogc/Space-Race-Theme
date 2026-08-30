@@ -78,19 +78,17 @@ apply_wallpaper() {
     # Ensure hyprpaper.conf points to wallpaper-current.jpg
     cat <<EOF > "$HYPRPAPER_CONF"
 # Apollo Space Mission Control - Dynamic Wallpaper Sync
-preload = /home/diogo/.config/hypr/wallpaper-current.jpg
-wallpaper = , /home/diogo/.config/hypr/wallpaper-current.jpg
-splash = false
-ipc = true
+wallpaper {
+    monitor =
+    path = /home/diogo/.config/hypr/wallpaper-current.jpg
+    fit_mode = cover
+}
 EOF
 
     # Apply live via hyprpaper IPC
     if command -v hyprpaper >/dev/null 2>&1; then
         if pgrep -x hyprpaper >/dev/null 2>&1; then
-            hyprctl hyprpaper preload "$target_wp" >/dev/null 2>&1 || true
-            hyprctl hyprpaper wallpaper ",$target_wp" >/dev/null 2>&1 || true
-            hyprctl hyprpaper unload all >/dev/null 2>&1 || true
-            hyprctl hyprpaper preload "$target_wp" >/dev/null 2>&1 || true
+            hyprctl hyprpaper wallpaper ",${target_wp},cover" >/dev/null 2>&1 || true
         else
             setsid hyprpaper >/dev/null 2>&1 &
         fi
