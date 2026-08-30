@@ -1,41 +1,57 @@
 # ⚡ 03. EECOM System Vitals & Automated Remediation
 
-The **Electrical, Environmental, and Consumables Operations Manager (EECOM)** is Apollo Mission Control's core system health, maintenance, and automated remediation suite.
+The **Electrical, Environmental, and Consumables Operations Manager (EECOM)** is Apollo Mission Control's core system health, stability, SSD maintenance, and automated remediation suite.
 
 ---
 
-## 🎯 1. EECOM Architecture & Safety Standard
+## 🎯 1. Operational Flow & Safety Standards
 
 ```mermaid
 graph TD
-    A[space-eecom Subsystem] --> B[Telemetry Diagnostic Scanner]
-    A --> C[Interactive Maintenance Console]
-    A --> D[Guided Safe Auto-Remediation]
-    A --> E[Apollo AI Flight Director Harness]
-    A --> F[Sys-Mem Vault Audit Exporter]
+    A[Telemetry Polling Engine] --> B{Health Diagnostic Scan}
+    B -->|Score >= 90| C[Status: NOMINAL 🚀]
+    B -->|70 <= Score < 90| D[Status: ADVISORY ⚠️]
+    B -->|Score < 70| E[Status: CRITICAL 🚨]
 
-    B --> B1[Health Score Algorithm 0-100]
-    B --> B2[7 Subsystem Scanners]
-
-    C --> C1[SSD / NVMe TRIM]
-    C --> C2[Orphan Package Cleaner]
-    C --> C3[Pacnew Reconciliation Wizard]
-    C --> C4[Journald Vacuum]
-    C --> C5[Pacman Cache Pruner]
-
-    E --> E1[Sanitized Telemetry Dump]
-    E --> E2[Async Progress Spinner]
-    E --> E3[ANSI Markdown Formatter]
+    D --> F[Guided Remediation Sequence: eecom --fix]
+    E --> G[Apollo AI Flight Director: eecom --ai]
+    
+    F --> H[Itemized Preview of Proposed Action]
+    H --> I{Explicit User Confirmation?}
+    I -->|Yes| J[Execute Safe Remediation]
+    I -->|No| K[Skip & Maintain State]
+    
+    J --> L[Re-evaluate Telemetry]
+    G --> M[Async Spinner & Telemetry Dump Analysis]
+    M --> N[ANSI Markdown Recommendations & Verified Commands]
 ```
-
-### Safety Standard & Rules
-1. **Strict User Consent**: Every deletion, uninstallation, or configuration override displays an itemized list of affected items first and requires explicit user confirmation.
-2. **Visual Feedback**: Scans feature live visual progress bars, while AI and disk operations feature real-time async spinners with elapsed time counters.
-3. **Comprehensive Offline Fallbacks**: If no AI engine is online, EECOM provides a full deterministic offline maintenance menu.
 
 ---
 
-## 📊 2. Health Scoring Algorithm (0 - 100)
+## 📸 2. EECOM Visual Telemetry & Interfaces
+
+### 🛰️ GUI Telemetry Console (`space-tools-dialog eecom`)
+<div align="center">
+  <img src="assets/wiki_tools_eecom.png" alt="EECOM GUI Console" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</div>
+
+- **Live Telemetry & Vitals Status Card**: Health score calculation, AI Director engine status, TRIM timer state, failed units, orphan packages, pacnew configs, root disk space, and journal usage.
+- **Interactive Action Matrix**: 1-click execution for scans, auto-remediation, TRIM discard, orphan removal, pacnew wizards, cache pruning, and audit note exporting.
+
+---
+
+### 💻 Standalone Terminal Diagnostic Suite (`eecom --scan` / `eecom --menu`)
+<div align="center">
+  <img src="assets/wiki_eecom_tui.png" alt="EECOM Terminal Diagnostic Scan" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</div>
+
+- Real-time animated progress bars during subsystem audits.
+- Async phosphor spinners during disk-intensive and AI operations.
+- Color-coded subsystem vitals: `[✔] NOMINAL`, `[▲] ADVISORY`, `[✖] CRITICAL`.
+
+---
+
+## 📊 3. Health Scoring Algorithm (0 - 100)
 
 EECOM computes an overall system stability and health index based on 7 core telemetry checks:
 
@@ -49,13 +65,9 @@ EECOM computes an overall system stability and health index based on 7 core tele
 | **Memory & ZRAM** | ZRAM active, zero recent critical kernel OOM events | `-10` to `-15` pts |
 | **Comms & DNS** | Active DNS resolver online, ping latency nominal | `-5` to `-10` pts |
 
-- **`90 - 100`**: **NOMINAL** (Green) — System operating within ideal parameters.
-- **`70 - 89`**: **ADVISORY** (Amber) — Minor pending maintenance (orphans, cache, pacnew).
-- **`< 70`**: **CRITICAL** (Red) — Failed services, missing kernel modules, or low disk space.
-
 ---
 
-## 🛠️ 3. Command Line Interface (CLI)
+## 🛠️ 4. Command Line Interface (CLI)
 
 ```bash
 # Run full diagnostic scan with progress bar & scoring
@@ -89,22 +101,4 @@ eecom --ai
 
 # Export structured Markdown audit to sys-mem vault
 eecom --audit
-
-# Machine-readable JSON output for Waybar / daemons
-eecom --json
 ```
-
----
-
-## 🤖 4. Apollo AI Flight Director & Markdown Formatter
-
-When dispatched via `eecom --ai` or `space-tools-dialog`:
-1. **Telemetry Capture**: Collects sanitized telemetry (kernel version, failed units, recent journal errors, dmesg, package transactions, memory pressure).
-2. **Async Spinner**: Displays an animated phosphor spinner with elapsed seconds while the AI engine processes the diagnosis.
-3. **ANSI Markdown Highlighting**: Renders headings (`🚀`, `🛰️`, `▶`), bold/mint code blocks, warnings, and bullet points directly in the terminal with authentic space mission styling.
-
----
-
-## 📋 5. Sys-Mem Vault Integration
-
-Running `eecom --audit` automatically generates a timestamped Markdown audit note in `~/sys-mem/sys_mem/system/` linking to the main Obsidian knowledge base index.
