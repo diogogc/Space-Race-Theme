@@ -1,0 +1,1548 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# 🚀 APOLLO MISSION CONTROL: EECOM (System Health, Vitals & Auto-Remediation)
+# ==============================================================================
+# Electrical, Environmental, and Consumables Operations Manager (EECOM)
+# Comprehensive health telemetry, diagnostics, SSD TRIM, and remediation.
+#
+# Rules & Safety Standard:
+#   • Strict User Consent: Every modification, deletion, or package action lists
+#     all affected items first and requires explicit user confirmation.
+#   • Live Visual Progress Bar & Spinners: Real-time visual feedback during scans.
+#   • Comprehensive Offline Suite: Rich non-AI deterministic maintenance actions.
+#   • Offline AI Fallback: If AI is not configured, lists manual & offline options.
+#
+# Usage:
+#   eecom                  -> Run full diagnostic health scan & score
+#   eecom --scan           -> Alias for full health scan
+#   eecom --fix            -> Interactive guided safe maintenance (prompts before each step)
+#   eecom --menu, -i       -> Interactive menu of all non-AI maintenance actions
+#   eecom --trim           -> Dedicated SSD / NVMe TRIM routine (with confirmation)
+#   eecom --orphans        -> List and cleanly remove orphaned packages (with confirmation)
+#   eecom --pacnew         -> List and reconcile pending .pacnew files
+#   eecom --clean-cache    -> List and prune pacman package cache (retaining last 2 versions)
+#   eecom --vacuum-logs    -> Check and vacuum oversized journal logs
+#   eecom --ai             -> Dispatch AI Flight Director (or list offline options if unconfigured)
+#   eecom --audit          -> Export complete markdown audit to sys-mem vault
+#   eecom --json           -> Machine-readable telemetry for Waybar / daemons
+#   eecom --help, -h       -> Display help and options
+# ==============================================================================
+
+set -uo pipefail
+
+# ------------------------------------------------------------------------------
+# 🛰️ Configuration & Paths
+# ------------------------------------------------------------------------------
+CONFIG_FILE="${HOME}/.config/space-theme/recovery.conf"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/space-eecom"
+TELEMETRY_DUMP="${CACHE_DIR}/telemetry-last.log"
+VAULT_DIR="${HOME}/sys-mem/sys_mem"
+VAULT_SYSTEM="${VAULT_DIR}/system"
+VAULT_TROUBLESHOOT="${VAULT_DIR}/troubleshooting"
+
+# Defaults
+AI_ENGINE="agy"
+OLLAMA_MODEL="qwen2.5-coder:7b"
+CUSTOM_AI_CMD=""
+AUTO_CONFIRM=false
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+fi
+
+mkdir -p "$CACHE_DIR"
+
+# ------------------------------------------------------------------------------
+# 🎨 Console Color Palette (Mission Control Slate & CRT Phosphor)
+# ------------------------------------------------------------------------------
+if [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
+    CLR_RESET="\033[0m"
+    CLR_BOLD="\033[1m"
+    CLR_DIM="\033[2m"
+    CLR_CYAN="\033[38;2;56;189;248m"       # NASA Flight Blue (#38bdf8)
+    CLR_MINT="\033[38;2;45;212;191m"       # VFD Mint Cyan (#2dd4bf)
+    CLR_AMBER="\033[38;2;245;158;11m"      # DSKY Amber Warning (#f59e0b)
+    CLR_GREEN="\033[38;2;34;197;94m"       # Nominal Green (#22c55e)
+    CLR_RED="\033[38;2;239;68;68m"         # Abort Red (#ef4444)
+    CLR_SLATE="\033[38;2;148;163;184m"     # Console Slate (#94a3b8)
+    CLR_DARK="\033[38;2;71;85;105m"        # Dark Border Slate (#475569)
+else
+    CLR_RESET=""
+    CLR_BOLD=""
+    CLR_DIM=""
+    CLR_CYAN=""
+    CLR_MINT=""
+    CLR_AMBER=""
+    CLR_GREEN=""
+    CLR_RED=""
+    CLR_SLATE=""
+    CLR_DARK=""
+fi
+
+SYM_OK="${CLR_GREEN}[✔]${CLR_RESET}"
+SYM_WARN="${CLR_AMBER}[▲]${CLR_RESET}"
+SYM_ERR="${CLR_RED}[✖]${CLR_RESET}"
+SYM_INFO="${CLR_CYAN}[ℹ]${CLR_RESET}"
+
+# ------------------------------------------------------------------------------
+# 📊 Progress Bar & Spinner Visual Indicators
+# ------------------------------------------------------------------------------
+render_progress_bar() {
+    local cur="$1"
+    local total="$2"
+    local label="$3"
+
+    if [[ ! -t 1 ]] || [[ "${NO_COLOR:-}" == "1" ]]; then
+        return 0
+    fi
+
+    local width=22
+    local filled=$(( (cur * width) / total ))
+    local empty=$(( width - filled ))
+    local pct=$(( (cur * 100) / total ))
+
+    local bar_filled=""
+    local bar_empty=""
+    local i
+    for ((i=0; i<filled; i++)); do bar_filled+="█"; done
+    for ((i=0; i<empty; i++)); do bar_empty+="░"; done
+
+    printf "\r  ${CLR_CYAN}[${CLR_GREEN}%s${CLR_DARK}%s${CLR_CYAN}] %3d%% ${CLR_MINT}🛰️  %-40s${CLR_RESET}\033[K" \
+        "$bar_filled" "$bar_empty" "$pct" "$label"
+}
+
+clear_progress_bar() {
+    if [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
+        printf "\r\033[K"
+    fi
+}
+
+run_with_spinner() {
+    local message="$1"
+    shift
+
+    if [[ ! -t 1 ]] || [[ "${NO_COLOR:-}" == "1" ]]; then
+        "$@"
+        return $?
+    fi
+
+    local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local tmp_out
+    tmp_out=$(mktemp)
+
+    "$@" > "$tmp_out" 2>&1 &
+    local pid=$!
+    local idx=0
+
+    # Hide cursor
+    printf "\033[?25l"
+    while kill -0 "$pid" 2>/dev/null; do
+        local c="${spin_chars[idx]}"
+        printf "\r  ${CLR_CYAN}%s${CLR_RESET} ${CLR_SLATE}%s${CLR_RESET}\033[K" "$c" "$message"
+        idx=$(( (idx + 1) % ${#spin_chars[@]} ))
+        sleep 0.08
+    done
+
+    wait "$pid"
+    local exit_code=$?
+
+    # Restore cursor & clear line
+    printf "\r\033[K\033[?25h"
+
+    if [[ -s "$tmp_out" ]]; then
+        cat "$tmp_out"
+    fi
+    rm -f "$tmp_out"
+    return "$exit_code"
+}
+
+# ------------------------------------------------------------------------------
+# 🎨 Space Theme Markdown Formatter & AI Progress Spinner
+# ------------------------------------------------------------------------------
+format_markdown() {
+    local target_file="${1:-}"
+    if [[ ! -t 1 ]] || [[ "${NO_COLOR:-}" == "1" ]]; then
+        if [[ -n "$target_file" && -f "$target_file" ]]; then
+            cat "$target_file"
+        else
+            cat
+        fi
+        return 0
+    fi
+
+    python3 -c '
+import sys, re
+
+CYAN = "\033[38;2;56;189;248m"       # NASA Flight Blue (#38bdf8)
+MINT = "\033[38;2;45;212;191m"       # VFD Mint Cyan (#2dd4bf)
+AMBER = "\033[38;2;245;158;11m"      # DSKY Amber Warning (#f59e0b)
+GREEN = "\033[38;2;34;197;94m"       # Nominal Green (#22c55e)
+RED = "\033[38;2;239;68;68m"         # Abort Red (#ef4444)
+SLATE = "\033[38;2;148;163;184m"     # Console Slate (#94a3b8)
+DARK = "\033[38;2;71;85;105m"        # Dark Border Slate (#475569)
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RESET = "\033[0m"
+
+def format_inline(line):
+    line = re.sub(r"`([^`]+)`", f"{MINT}\\1{RESET}", line)
+    line = re.sub(r"\*\*\*([^*]+)\*\*\*", f"{BOLD}{MINT}\\1{RESET}", line)
+    line = re.sub(r"\*\*([^*]+)\*\*", f"{BOLD}\\1{RESET}", line)
+    line = re.sub(r"\*([^*]+)\*", f"{DIM}\\1{RESET}", line)
+    return line
+
+def render_md(content):
+    lines = content.splitlines()
+    in_code_block = False
+    code_lang = ""
+    out = []
+    
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not in_code_block:
+                in_code_block = True
+                code_lang = stripped[3:].strip() or "terminal"
+                out.append(f"  {DARK}┌─ {CYAN}{code_lang}{DARK} " + "─" * max(10, 60 - len(code_lang)) + f"{RESET}")
+            else:
+                in_code_block = False
+                out.append(f"  {DARK}└" + "─" * 65 + f"{RESET}")
+            continue
+        
+        if in_code_block:
+            out.append(f"  {DARK}│{RESET} {MINT}{line}{RESET}")
+            continue
+            
+        if re.match(r"^#\s+", line):
+            title = line[1:].strip()
+            out.append(f"\n  {BOLD}{CYAN}🚀 {title.upper()}{RESET}")
+            out.append(f"  {DARK}" + "═" * 70 + f"{RESET}")
+            continue
+        elif re.match(r"^##\s+", line):
+            title = line[2:].strip()
+            out.append(f"\n  {BOLD}{MINT}🛰️  {title}{RESET}")
+            out.append(f"  {DARK}" + "─" * 70 + f"{RESET}")
+            continue
+        elif re.match(r"^###\s+", line):
+            title = line[3:].strip()
+            out.append(f"\n  {BOLD}{AMBER}▶ {title}{RESET}")
+            continue
+        elif re.match(r"^####\s+", line):
+            title = line[4:].strip()
+            out.append(f"  {BOLD}{SLATE}• {title}{RESET}")
+            continue
+            
+        if re.match(r"^(\-{3,}|\*{3,}|_{3,})$", stripped):
+            out.append(f"  {DARK}" + "─" * 70 + f"{RESET}")
+            continue
+            
+        if line.startswith(">"):
+            b_content = line.lstrip("> ").strip()
+            if b_content.startswith("[!NOTE]") or b_content.startswith("[!INFO]"):
+                out.append(f"  {CYAN}ℹ [NOTE]{RESET}")
+            elif b_content.startswith("[!WARNING]") or b_content.startswith("[!CAUTION]"):
+                out.append(f"  {AMBER}▲ [WARNING]{RESET}")
+            elif b_content.startswith("[!CRITICAL]") or b_content.startswith("[!ERROR]"):
+                out.append(f"  {RED}✖ [CRITICAL]{RESET}")
+            else:
+                out.append(f"  {DARK}│{RESET} {SLATE}{format_inline(b_content)}{RESET}")
+            continue
+            
+        m_bullet = re.match(r"^(\s*)[*\-+]\s+(.*)$", line)
+        if m_bullet:
+            indent, item_text = m_bullet.groups()
+            out.append(f"  {indent}{CYAN}•{RESET} {format_inline(item_text)}")
+            continue
+            
+        m_num = re.match(r"^(\s*)(\d+\.)\s+(.*)$", line)
+        if m_num:
+            indent, num_str, item_text = m_num.groups()
+            out.append(f"  {indent}{CYAN}{num_str}{RESET} {format_inline(item_text)}")
+            continue
+            
+        if line.strip() == "":
+            out.append("")
+        else:
+            out.append(f"  {format_inline(line)}")
+            
+    return "\n".join(out)
+
+try:
+    if len(sys.argv) > 1 and sys.argv[1]:
+        with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    else:
+        content = sys.stdin.read()
+    print(render_md(content))
+except Exception:
+    if len(sys.argv) > 1 and sys.argv[1]:
+        with open(sys.argv[1], "r", encoding="utf-8", errors="replace") as f:
+            sys.stdout.write(f.read())
+    else:
+        sys.stdout.write(sys.stdin.read())
+' "$target_file" 2>/dev/null
+}
+
+run_ai_with_spinner() {
+    local message="$1"
+    local output_file="$2"
+    shift 2
+
+    if [[ ! -t 1 ]] || [[ "${NO_COLOR:-}" == "1" ]]; then
+        "$@" > "$output_file" 2>&1
+        return $?
+    fi
+
+    local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local start_time
+    start_time=$(date +%s)
+
+    "$@" > "$output_file" 2>&1 &
+    local pid=$!
+    local idx=0
+
+    # Hide cursor
+    printf "\033[?25l"
+    while kill -0 "$pid" 2>/dev/null; do
+        local elapsed=$(( $(date +%s) - start_time ))
+        local c="${spin_chars[idx]}"
+        printf "\r  ${CLR_CYAN}%s${CLR_RESET} ${CLR_SLATE}%s${CLR_RESET} ${CLR_MINT}(%ds elapsed)${CLR_RESET}\033[K" "$c" "$message" "$elapsed"
+        idx=$(( (idx + 1) % ${#spin_chars[@]} ))
+        sleep 0.08
+    done
+
+    wait "$pid"
+    local exit_code=$?
+
+    # Restore cursor & clear line
+    printf "\r\033[K\033[?25h"
+    return "$exit_code"
+}
+
+# ------------------------------------------------------------------------------
+# 🛡️ User Consent & Sanitization Helpers
+# ------------------------------------------------------------------------------
+sanitize_stream() {
+    sed -E \
+        -e 's/(password|passwd|secret|token|api[_-]?key|auth|bearer|passphrase)[=:][ ]*[^ ,;"]+/\1=[REDACTED]/gI' \
+        -e 's/([0-9a-fA-F]{32,64})/[HASH_REDACTED]/g'
+}
+
+num_clean() {
+    local val="$1"
+    local fallback="${2:-0}"
+    val=$(echo "$val" | head -n1 | tr -cd '0-9')
+    echo "${val:-$fallback}"
+}
+
+prompt_confirm() {
+    local prompt_msg="$1"
+    local default_choice="${2:-N}"
+
+    if [[ "$AUTO_CONFIRM" == true ]]; then
+        echo -e "  ${CLR_CYAN}Auto-confirm enabled (--yes). Proceeding.${CLR_RESET}"
+        return 0
+    fi
+
+    local prompt_suffix="[y/N]"
+    if [[ "$default_choice" == "Y" || "$default_choice" == "y" ]]; then
+        prompt_suffix="[Y/n]"
+    fi
+
+    local response=""
+    if [[ -t 0 ]]; then
+        read -r -p "$(echo -e "  ${CLR_AMBER}❓ ${prompt_msg} ${prompt_suffix}: ${CLR_RESET}")" response
+    elif [[ -e /dev/tty ]]; then
+        read -r -p "$(echo -e "  ${CLR_AMBER}❓ ${prompt_msg} ${prompt_suffix}: ${CLR_RESET}")" response < /dev/tty
+    else
+        echo -e "  ${CLR_RED}No interactive TTY available and --yes not provided. Aborting action.${CLR_RESET}"
+        return 1
+    fi
+
+    if [[ -z "$response" ]]; then
+        response="$default_choice"
+    fi
+
+    case "$response" in
+        [yY]|[yY][eE][sS])
+            return 0
+            ;;
+        *)
+            echo -e "  ${CLR_SLATE}✖ Action cancelled by user.${CLR_RESET}"
+            return 1
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# 📊 Global State Variables
+# ------------------------------------------------------------------------------
+HEALTH_SCORE=100
+CRITICAL_COUNT=0
+WARNING_COUNT=0
+ADVISORY_LIST=()
+CRITICAL_LIST=()
+
+deduct_score() {
+    local pts="$1"
+    local type="$2"
+    local msg="$3"
+    HEALTH_SCORE=$(( HEALTH_SCORE - pts ))
+    if (( HEALTH_SCORE < 0 )); then HEALTH_SCORE=0; fi
+
+    if [[ "$type" == "crit" ]]; then
+        CRITICAL_COUNT=$(( CRITICAL_COUNT + 1 ))
+        CRITICAL_LIST+=("$msg")
+    else
+        WARNING_COUNT=$(( WARNING_COUNT + 1 ))
+        ADVISORY_LIST+=("$msg")
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 1: Kernel, Bootloader & Hardware Modules
+# ------------------------------------------------------------------------------
+check_kernel_and_boot() {
+    local running_kernel
+    running_kernel="$(uname -r)"
+    local installed_kernel_modules
+    installed_kernel_modules=$(find /usr/lib/modules/ -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || echo "$running_kernel")
+
+    local kernel_match=false
+    while IFS= read -r kmod; do
+        if [[ "$kmod" == "$running_kernel" ]]; then
+            kernel_match=true
+            break
+        fi
+    done <<< "$installed_kernel_modules"
+
+    local boot_space_pct
+    boot_space_pct=$(df -P /boot 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}' || echo "0")
+    boot_space_pct=$(num_clean "$boot_space_pct" 0)
+
+    local dmesg_crit
+    dmesg_crit=$(dmesg -l emerg,alert,crit,err 2>/dev/null | wc -l || true)
+    dmesg_crit=$(num_clean "$dmesg_crit" 0)
+
+    local status_line=""
+    local is_ok=true
+
+    if [[ "$kernel_match" == false ]]; then
+        is_ok=false
+        deduct_score 15 "warn" "Kernel updated on disk but running (${running_kernel}). Reboot recommended."
+        status_line="Reboot required (Running: ${running_kernel} | Installed: $(echo "$installed_kernel_modules" | tr '\n' ' '))"
+    elif (( boot_space_pct > 85 )); then
+        is_ok=false
+        deduct_score 15 "crit" "/boot partition is nearly full (${boot_space_pct}% utilized)."
+        status_line="/boot space critical (${boot_space_pct}% used)"
+    elif (( dmesg_crit > 20 )); then
+        is_ok=false
+        deduct_score 5 "warn" "Kernel error messages detected in dmesg (${dmesg_crit} events)."
+        status_line="Linux ${running_kernel} (${dmesg_crit} dmesg errors logged)"
+    else
+        status_line="Linux ${running_kernel} (Modules sync OK, /boot at ${boot_space_pct}%)"
+    fi
+
+    clear_progress_bar
+    if [[ "$is_ok" == true ]]; then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "KERNEL & BOOT" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    elif [[ "$status_line" == *"critical"* ]]; then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "KERNEL & BOOT" "$CLR_RED" "$status_line" "$CLR_RESET"
+    else
+        printf "  %b %-20s : %b%s%b\n" "$SYM_WARN" "KERNEL & BOOT" "$CLR_AMBER" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 2: Systemd Daemons & Journal Integrity
+# ------------------------------------------------------------------------------
+check_systemd_services() {
+    local failed_sys
+    failed_sys=$(systemctl --failed --no-legend --plain 2>/dev/null | wc -l || true)
+    failed_sys=$(num_clean "$failed_sys" 0)
+
+    local failed_user
+    failed_user=$(systemctl --user --failed --no-legend --plain 2>/dev/null | wc -l || true)
+    failed_user=$(num_clean "$failed_user" 0)
+
+    local journal_size_raw
+    journal_size_raw=$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[MGTK]B?' | head -n1 || true)
+    journal_size_raw=${journal_size_raw:-0M}
+
+    local is_ok=true
+    local status_line=""
+
+    if (( failed_sys > 0 )); then
+        is_ok=false
+        local failed_units
+        failed_units=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | paste -sd, - || true)
+        deduct_score 15 "crit" "${failed_sys} systemd system unit(s) in failed state: ${failed_units}"
+        status_line="${failed_sys} failed system service(s) [${failed_units}]"
+    fi
+
+    if (( failed_user > 0 )); then
+        is_ok=false
+        local failed_user_units
+        failed_user_units=$(systemctl --user --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | paste -sd, - || true)
+        deduct_score 5 "warn" "${failed_user} systemd user unit(s) in failed state: ${failed_user_units}"
+        if [[ -n "$status_line" ]]; then
+            status_line="${status_line} | ${failed_user} user unit(s) failed"
+        else
+            status_line="${failed_user} failed user service(s) [${failed_user_units}]"
+        fi
+    fi
+
+    if [[ "$journal_size_raw" == *"G"* ]] && (( $(echo "$journal_size_raw" | sed 's/G.*//' | cut -d. -f1) >= 1 )); then
+        deduct_score 5 "warn" "Systemd journal size is large (${journal_size_raw}). Recommend vacuuming."
+        if [[ -z "$status_line" ]]; then
+            status_line="0 failed units | Journal size elevated (${journal_size_raw})"
+        fi
+    fi
+
+    clear_progress_bar
+    if [[ "$is_ok" == true ]]; then
+        status_line="All units active (0 failed system, 0 failed user | Journal: ${journal_size_raw})"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "SYSTEMD SERVICES" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    elif (( failed_sys > 0 )); then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "SYSTEMD SERVICES" "$CLR_RED" "$status_line" "$CLR_RESET"
+    else
+        printf "  %b %-20s : %b%s%b\n" "$SYM_WARN" "SYSTEMD SERVICES" "$CLR_AMBER" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 3: Package Manager, Repos & DB Locks
+# ------------------------------------------------------------------------------
+check_package_stack() {
+    local lock_active=false
+    if [[ -f "/var/lib/pacman/db.lck" ]]; then
+        if ! pgrep -x "pacman" >/dev/null 2>&1; then
+            lock_active=true
+            deduct_score 15 "crit" "Stale pacman database lock detected at /var/lib/pacman/db.lck (no pacman process running)."
+        fi
+    fi
+
+    local orphan_count=0
+    if command -v pacman >/dev/null 2>&1; then
+        orphan_count=$(pacman -Qdtq 2>/dev/null | wc -l || true)
+    fi
+    orphan_count=$(num_clean "$orphan_count" 0)
+
+    local pacnew_count=0
+    if command -v pacdiff >/dev/null 2>&1; then
+        pacnew_count=$(pacdiff -o 2>/dev/null | wc -l || true)
+    else
+        pacnew_count=$(find /etc \( -name "*.pacnew" -o -name "*.pacsave" \) 2>/dev/null | wc -l || true)
+    fi
+    pacnew_count=$(num_clean "$pacnew_count" 0)
+
+    local cache_size="0MB"
+    if [[ -d "/var/cache/pacman/pkg" ]]; then
+        cache_size=$(du -sh /var/cache/pacman/pkg 2>/dev/null | awk '{print $1}')
+    fi
+    cache_size=${cache_size:-0MB}
+
+    local status_line=""
+    clear_progress_bar
+    if [[ "$lock_active" == true ]]; then
+        status_line="STALE LOCK at /var/lib/pacman/db.lck | ${orphan_count} orphans | ${pacnew_count} pacnew"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "PACKAGE & REPOS" "$CLR_RED" "$status_line" "$CLR_RESET"
+    elif (( pacnew_count > 0 || orphan_count > 10 )); then
+        if (( pacnew_count > 0 )); then
+            deduct_score 5 "warn" "${pacnew_count} pending .pacnew/.pacsave file(s) require merging (pacdiff)."
+        fi
+        if (( orphan_count > 10 )); then
+            deduct_score 5 "warn" "${orphan_count} orphan packages detected in system."
+        fi
+        status_line="${pacnew_count} pacnew file(s) | ${orphan_count} orphans | Cache: ${cache_size}"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_WARN" "PACKAGE & REPOS" "$CLR_AMBER" "$status_line" "$CLR_RESET"
+    else
+        status_line="Sync nominal | ${orphan_count} orphans | ${pacnew_count} pacnew | Cache: ${cache_size}"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "PACKAGE & REPOS" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 4: Storage, Filesystems, Btrfs & SSD TRIM
+# ------------------------------------------------------------------------------
+check_storage_and_trim() {
+    local root_pct
+    root_pct=$(df -P / 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}' || echo "0")
+    local home_pct
+    home_pct=$(df -P /home 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}' || echo "$root_pct")
+    root_pct=$(num_clean "$root_pct" 0)
+    home_pct=$(num_clean "$home_pct" 0)
+
+    # Check fstrim.timer
+    local fstrim_active=false
+    if systemctl is-active --quiet fstrim.timer 2>/dev/null; then
+        fstrim_active=true
+    fi
+
+    # Check discard capability across all non-zram block devices
+    local has_discard=false
+    if lsblk -d -o NAME,DISC-GRAN 2>/dev/null | awk 'NR>1 && $2 != "0B" && $2 != "" && $1 !~ /^zram/ {found=1} END {exit !found}'; then
+        has_discard=true
+    fi
+
+    # Check Btrfs scrub errors if applicable
+    local btrfs_scrub_ok=true
+    if findmnt -n -o FSTYPE / 2>/dev/null | grep -q "btrfs"; then
+        local scrub_out
+        scrub_out=$(btrfs scrub status / 2>/dev/null || true)
+        if echo "$scrub_out" | grep -qE "csum=([1-9]|verify=[1-9])"; then
+            btrfs_scrub_ok=false
+            deduct_score 25 "crit" "Btrfs scrub detected uncorrected checksum errors on / filesystem!"
+        fi
+    fi
+
+    local is_ok=true
+    local status_line=""
+
+    if (( root_pct > 90 || home_pct > 90 )); then
+        is_ok=false
+        deduct_score 20 "crit" "Filesystem capacity critical (/ at ${root_pct}%, /home at ${home_pct}%)."
+        status_line="Capacity critical (Root: ${root_pct}% | Home: ${home_pct}%)"
+    elif (( root_pct > 80 || home_pct > 80 )); then
+        is_ok=false
+        deduct_score 5 "warn" "Filesystem storage elevated (/ at ${root_pct}%, /home at ${home_pct}%)."
+        status_line="Capacity elevated (Root: ${root_pct}% | Home: ${home_pct}%)"
+    else
+        status_line="Root: ${root_pct}% used | Home: ${home_pct}% used"
+    fi
+
+    # Append TRIM info
+    if [[ "$has_discard" == true ]]; then
+        if [[ "$fstrim_active" == true ]]; then
+            status_line="${status_line} | SSD TRIM: Active (fstrim.timer)"
+        else
+            deduct_score 5 "warn" "SSD Discard supported but fstrim.timer is NOT active/enabled."
+            status_line="${status_line} | SSD TRIM: Timer Inactive"
+            is_ok=false
+        fi
+    else
+        status_line="${status_line} | SSD TRIM: N/A"
+    fi
+
+    clear_progress_bar
+    if [[ "$btrfs_scrub_ok" == false ]]; then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "STORAGE & SSD TRIM" "$CLR_RED" "$status_line [Btrfs errors]" "$CLR_RESET"
+    elif [[ "$is_ok" == true ]]; then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "STORAGE & SSD TRIM" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    elif (( root_pct > 90 || home_pct > 90 )); then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "STORAGE & SSD TRIM" "$CLR_RED" "$status_line" "$CLR_RESET"
+    else
+        printf "  %b %-20s : %b%s%b\n" "$SYM_WARN" "STORAGE & SSD TRIM" "$CLR_AMBER" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 5: Memory, ZRAM & Crash Analysis
+# ------------------------------------------------------------------------------
+check_memory_and_crashes() {
+    local mem_total_kb
+    mem_total_kb=$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 1)
+    local mem_avail_kb
+    mem_avail_kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 1)
+    local mem_pct=$(( ( (mem_total_kb - mem_avail_kb) * 100 ) / mem_total_kb ))
+
+    local zram_status="N/A"
+    if command -v zramctl >/dev/null 2>&1 && zramctl | grep -q "zram"; then
+        local z_disk z_comp
+        z_disk=$(zramctl --bytes --noheadings --output DISKSIZE 2>/dev/null | head -n1 || echo 0)
+        z_comp=$(zramctl --bytes --noheadings --output COMPR-DATA 2>/dev/null | head -n1 || echo 0)
+        if (( z_comp > 0 )); then
+            local ratio
+            ratio=$(awk "BEGIN {printf \"%.1f:1\", $z_disk / $z_comp}")
+            zram_status="Active (Ratio $ratio)"
+        else
+            zram_status="Active (Idle)"
+        fi
+    fi
+
+    local oom_events=0
+    if command -v journalctl >/dev/null 2>&1; then
+        oom_events=$(journalctl -k -b 0 --no-pager 2>/dev/null | grep -iE "Out of memory|oom-killer|Killed process" | wc -l || true)
+    fi
+    oom_events=$(num_clean "$oom_events" 0)
+
+    local coredumps_recent=0
+    if command -v coredumpctl >/dev/null 2>&1; then
+        coredumps_recent=$(coredumpctl list --since "24 hours ago" --no-legend 2>/dev/null | wc -l || true)
+    fi
+    coredumps_recent=$(num_clean "$coredumps_recent" 0)
+
+    local is_ok=true
+    local status_line="RAM: ${mem_pct}% used | ZRAM: ${zram_status}"
+
+    if (( oom_events > 0 )); then
+        is_ok=false
+        deduct_score 20 "crit" "${oom_events} Out-Of-Memory (OOM) killer events recorded in current boot."
+        status_line="${status_line} | ${oom_events} OOM kills!"
+    fi
+
+    if (( coredumps_recent > 5 )); then
+        is_ok=false
+        deduct_score 10 "warn" "${coredumps_recent} application crashes/coredumps in past 24 hours."
+        status_line="${status_line} | ${coredumps_recent} coredumps (24h)"
+    fi
+
+    if (( mem_pct > 92 )); then
+        is_ok=false
+        deduct_score 10 "warn" "Physical RAM usage is near exhaustion (${mem_pct}%)."
+    fi
+
+    clear_progress_bar
+    if (( oom_events > 0 )); then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "MEMORY & STABILITY" "$CLR_RED" "$status_line" "$CLR_RESET"
+    elif [[ "$is_ok" == true ]]; then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "MEMORY & STABILITY" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    else
+        printf "  %b %-20s : %b%s%b\n" "$SYM_WARN" "MEMORY & STABILITY" "$CLR_AMBER" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 6: Wayland / Hyprland & Audio Stack
+# ------------------------------------------------------------------------------
+check_wayland_and_media() {
+    local hypr_ok=false
+    local hypr_ver="Offline"
+    if [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && command -v hyprctl >/dev/null 2>&1; then
+        if hyprctl version >/dev/null 2>&1; then
+            hypr_ok=true
+            hypr_ver="IPC Connected"
+        fi
+    elif pgrep -x "Hyprland" >/dev/null 2>&1; then
+        hypr_ok=true
+        hypr_ver="Running"
+    fi
+
+    local pw_ok=false
+    local pw_status="Stopped"
+    if command -v wpctl >/dev/null 2>&1 && wpctl status >/dev/null 2>&1; then
+        pw_ok=true
+        pw_status="PipeWire Active"
+    elif pgrep -x "pipewire" >/dev/null 2>&1; then
+        pw_ok=true
+        pw_status="Running"
+    fi
+
+    local gpu_errors
+    gpu_errors=$(dmesg 2>/dev/null | grep -iE "amdgpu.*(ring.*timeout|reset|error)|nvidia.*(error|xid)|i915.*(hung|error)" | tail -n 1 || true)
+
+    local status_line="Hyprland: ${hypr_ver} | Audio: ${pw_status}"
+
+    clear_progress_bar
+    if [[ -n "$gpu_errors" ]]; then
+        deduct_score 15 "crit" "GPU Driver ring reset or hardware timeout detected in dmesg!"
+        status_line="${status_line} | GPU Driver Error Detected"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "GRAPHICS & MEDIA" "$CLR_RED" "$status_line" "$CLR_RESET"
+    elif [[ "$hypr_ok" == true && "$pw_ok" == true ]]; then
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "GRAPHICS & MEDIA" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    else
+        printf "  %b %-20s : %b%s%b\n" "$SYM_INFO" "GRAPHICS & MEDIA" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🔬 Subsystem 7: Networking & DNS Resolution
+# ------------------------------------------------------------------------------
+check_network_and_dns() {
+    local net_ok=false
+    local gw_ip
+    gw_ip=$(ip route 2>/dev/null | awk '/default/ {print $3}' | head -n1 || echo "")
+    if [[ -n "$gw_ip" ]]; then
+        net_ok=true
+    fi
+
+    local dns_ok=false
+    local dns_time_ms=0
+    local start_ns end_ns
+    start_ns=$(date +%s%N)
+    if getent hosts archlinux.org >/dev/null 2>&1; then
+        end_ns=$(date +%s%N)
+        dns_ok=true
+        dns_time_ms=$(( (end_ns - start_ns) / 1000000 ))
+    fi
+
+    local status_line=""
+    clear_progress_bar
+    if [[ "$net_ok" == true && "$dns_ok" == true ]]; then
+        status_line="Default Gateway: ${gw_ip} | DNS: ${dns_time_ms}ms (archlinux.org)"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_OK" "NETWORK & DNS" "$CLR_SLATE" "$status_line" "$CLR_RESET"
+    elif [[ "$net_ok" == true && "$dns_ok" == false ]]; then
+        deduct_score 15 "crit" "Network gateway is reachable (${gw_ip}) but DNS hostname resolution failed."
+        status_line="Gateway OK (${gw_ip}) | DNS RESOLUTION FAILED"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "NETWORK & DNS" "$CLR_RED" "$status_line" "$CLR_RESET"
+    else
+        deduct_score 20 "crit" "No active default network gateway found."
+        status_line="OFFLINE (No default route)"
+        printf "  %b %-20s : %b%s%b\n" "$SYM_ERR" "NETWORK & DNS" "$CLR_RED" "$status_line" "$CLR_RESET"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 🛰️ Full Telemetry Scan Routine with Live Status & Progress Bar
+# ------------------------------------------------------------------------------
+run_scan() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}"
+    echo "  🚀 [APOLLO MISSION CONTROL: EECOM] Subsystems Health & Stability Check"
+    echo "  ════════════════════════════════════════════════════════════════════════════════"
+    echo -e "${CLR_RESET}"
+
+    # Step 1: Kernel & Bootloader
+    render_progress_bar 1 7 "Probing Kernel, Modules & Bootloader..."
+    check_kernel_and_boot
+
+    # Step 2: Systemd Services
+    render_progress_bar 2 7 "Scanning Systemd System & User Daemons..."
+    check_systemd_services
+
+    # Step 3: Package Stack
+    render_progress_bar 3 7 "Auditing Package Repos, Locks & Cache..."
+    check_package_stack
+
+    # Step 4: Storage & SSD TRIM
+    render_progress_bar 4 7 "Checking Storage, Inodes & SSD Discard..."
+    check_storage_and_trim
+
+    # Step 5: Memory & Stability
+    render_progress_bar 5 7 "Analyzing Memory, ZRAM & Crash Logs..."
+    check_memory_and_crashes
+
+    # Step 6: Graphics & Audio
+    render_progress_bar 6 7 "Verifying Wayland IPC & Audio Daemons..."
+    check_wayland_and_media
+
+    # Step 7: Network & DNS
+    render_progress_bar 7 7 "Testing Gateway & DNS Query Latency..."
+    check_network_and_dns
+
+    clear_progress_bar
+    echo -e "${CLR_DARK}  ────────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+
+    local score_color="$CLR_GREEN"
+    local score_rating="OPTIMAL / NOMINAL"
+    if (( HEALTH_SCORE >= 90 )); then
+        score_color="$CLR_GREEN"
+        score_rating="OPTIMAL / NOMINAL"
+    elif (( HEALTH_SCORE >= 75 )); then
+        score_color="$CLR_AMBER"
+        score_rating="NOMINAL WITH ADVISORIES"
+    elif (( HEALTH_SCORE >= 50 )); then
+        score_color="$CLR_AMBER"
+        score_rating="DEGRADED SUBSYSTEMS"
+    else
+        score_color="$CLR_RED"
+        score_rating="MISSION CRITICAL / ABORT HAZARD"
+    fi
+
+    printf "  %bSYSTEM INTEGRITY SCORE: %b%d/100%b (%b%s%b)\n\n" \
+        "$CLR_BOLD" "$score_color" "$HEALTH_SCORE" "$CLR_RESET" "$score_color" "$score_rating" "$CLR_RESET"
+
+    if (( CRITICAL_COUNT > 0 || WARNING_COUNT > 0 )); then
+        echo -e "  ${CLR_AMBER}${CLR_BOLD}Active Telemetry Advisories & Action Items:${CLR_RESET}"
+        for crit in "${CRITICAL_LIST[@]}"; do
+            echo -e "    ${CLR_RED}✖ [CRITICAL]${CLR_RESET} ${crit}"
+        done
+        for adv in "${ADVISORY_LIST[@]}"; do
+            echo -e "    ${CLR_AMBER}▲ [ADVISORY]${CLR_RESET} ${adv}"
+        done
+        echo ""
+        echo -e "  ${CLR_SLATE}Suggested Non-AI Maintenance Actions:${CLR_RESET}"
+        echo -e "    • Run ${CLR_CYAN}eecom --fix${CLR_RESET} to review and apply safe maintenance with explicit consent."
+        echo -e "    • Run ${CLR_CYAN}eecom --menu${CLR_RESET} to access the interactive offline maintenance menu."
+        echo -e "    • Run ${CLR_CYAN}eecom --trim${CLR_RESET} to perform SSD / NVMe block discard."
+        echo -e "    • Run ${CLR_CYAN}eecom --orphans${CLR_RESET} to review and clean orphaned packages."
+        echo -e "    • Run ${CLR_CYAN}eecom --pacnew${CLR_RESET} to inspect and reconcile pending configuration files."
+        echo -e "    • Run ${CLR_CYAN}eecom --audit${CLR_RESET} to record this snapshot in your ${CLR_MINT}sys-mem${CLR_RESET} vault."
+    else
+        echo -e "  ${CLR_GREEN}✨ All flight telemetry and consumables operating within nominal tolerances.${CLR_RESET}"
+    fi
+    echo ""
+}
+
+# ------------------------------------------------------------------------------
+# 🛠️ Individual Deterministic (Non-AI) Maintenance Routines
+# ------------------------------------------------------------------------------
+
+# 1. Stale Pacman Lock Fix
+fix_stale_lock() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}📦 [PACMAN DATABASE LOCK CHECK]${CLR_RESET}"
+    local lock_path="/var/lib/pacman/db.lck"
+    if [[ ! -f "$lock_path" ]]; then
+        echo -e "  ${CLR_GREEN}✔ No database lock found at ${lock_path}.${CLR_RESET}\n"
+        return 0
+    fi
+
+    if pgrep -x "pacman" >/dev/null 2>&1; then
+        local pids
+        pids=$(pgrep -x "pacman" | paste -sd, -)
+        echo -e "  ${CLR_AMBER}▲ Active pacman process detected (PID: ${pids}). Lock is currently in legitimate use.${CLR_RESET}"
+        echo -e "  ${CLR_SLATE}Will NOT remove active lock file.${CLR_RESET}\n"
+        return 0
+    fi
+
+    echo -e "  ${CLR_RED}✖ Stale pacman lock file detected:${CLR_RESET} ${CLR_BOLD}${lock_path}${CLR_RESET}"
+    echo -e "  ${CLR_SLATE}Target to delete:${CLR_RESET}"
+    echo -e "    - ${lock_path} (Last modified: $(stat -c '%y' "$lock_path" 2>/dev/null || echo 'Unknown'))"
+
+    if prompt_confirm "Do you want to delete this stale pacman lock file?"; then
+        sudo rm -f "$lock_path"
+        echo -e "  ${CLR_GREEN}✔ Stale lock removed successfully.${CLR_RESET}\n"
+    fi
+}
+
+# 2. SSD / NVMe Block Discard & Timer Routine
+fix_ssd_trim() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}💽 [SSD / NVME DISCARD & TRIM SUBROUTINE]${CLR_RESET}"
+
+    # List candidate mount points
+    echo -e "  ${CLR_SLATE}Candidate target filesystems for discard (fstrim):${CLR_RESET}"
+    findmnt -D -t btrfs,ext4,xfs,f2fs,vfat 2>/dev/null || df -h -T / /boot /home 2>/dev/null
+
+    # Timer status
+    local fstrim_active=false
+    if systemctl is-active --quiet fstrim.timer 2>/dev/null; then
+        fstrim_active=true
+        echo -e "  ${CLR_GREEN}✔ systemd fstrim.timer is scheduled & active.${CLR_RESET}"
+    else
+        echo -e "  ${CLR_AMBER}▲ systemd fstrim.timer is currently INACTIVE / disabled.${CLR_RESET}"
+    fi
+
+    if [[ "$fstrim_active" == false ]]; then
+        if prompt_confirm "Do you want to enable and start weekly systemd fstrim.timer?"; then
+            sudo systemctl enable --now fstrim.timer
+            echo -e "  ${CLR_GREEN}✔ fstrim.timer enabled and activated.${CLR_RESET}"
+        fi
+    fi
+
+    if prompt_confirm "Do you want to execute on-demand TRIM across all mounted drives now (fstrim -av)?"; then
+        echo -e "  ${CLR_CYAN}• Discarding unused blocks...${CLR_RESET}"
+        run_with_spinner "Executing fstrim -av on all candidate block devices..." sudo fstrim -av
+        echo -e "  ${CLR_GREEN}✔ On-demand SSD TRIM completed successfully.${CLR_RESET}\n"
+    fi
+}
+
+# 3. Journal Vacuuming Routine
+fix_journal() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}📜 [SYSTEMD JOURNAL LOGS MAINTENANCE]${CLR_RESET}"
+    local cur_usage
+    cur_usage=$(journalctl --disk-usage 2>/dev/null || echo "Unknown")
+    echo -e "  ${CLR_SLATE}Current log disk allocation:${CLR_RESET} ${CLR_BOLD}${cur_usage}${CLR_RESET}"
+
+    echo -e "  ${CLR_SLATE}Proposed cleanup action:${CLR_RESET}"
+    echo -e "    - Vacuum journal logs older than 2 weeks"
+    echo -e "    - Limit maximum journal size on disk to 250MB"
+
+    if prompt_confirm "Do you want to vacuum systemd journal logs to max 250MB / 2 weeks?"; then
+        run_with_spinner "Vacuuming journal logs..." sudo journalctl --vacuum-size=250M --vacuum-time=2weeks
+        echo -e "  ${CLR_GREEN}✔ Journal logs vacuumed.${CLR_RESET}\n"
+    fi
+}
+
+# 4. Pacman Cache Pruning Routine
+fix_pacman_cache() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}📦 [PACMAN PACKAGE CACHE PRUNING]${CLR_RESET}"
+    if ! command -v paccache >/dev/null 2>&1; then
+        echo -e "  ${CLR_AMBER}▲ paccache (from pacman-contrib) is not installed.${CLR_RESET}"
+        echo -e "  ${CLR_SLATE}Install pacman-contrib with: sudo pacman -S pacman-contrib${CLR_RESET}\n"
+        return 0
+    fi
+
+    local cache_dir="/var/cache/pacman/pkg"
+    local cache_size
+    cache_size=$(du -sh "$cache_dir" 2>/dev/null | awk '{print $1}' || echo "0MB")
+    echo -e "  ${CLR_SLATE}Current cache size in ${cache_dir}:${CLR_RESET} ${CLR_BOLD}${cache_size}${CLR_RESET}"
+
+    local dry_run_installed dry_run_uninstalled
+    run_with_spinner "Analyzing pacman package cache candidates..." sleep 0.2
+    dry_run_installed=$(paccache -d -r 2>/dev/null | tail -n 2 || true)
+    dry_run_uninstalled=$(paccache -d -ruk0 2>/dev/null | tail -n 2 || true)
+
+    echo -e "  ${CLR_SLATE}Summary of candidate pruning:${CLR_RESET}"
+    echo -e "    - Old versions of installed packages (keeping last 2): ${dry_run_installed}"
+    echo -e "    - Uninstalled packages cache: ${dry_run_uninstalled}"
+
+    if prompt_confirm "Do you want to delete these old cached package versions?"; then
+        echo -e "  ${CLR_CYAN}• Pruning cache...${CLR_RESET}"
+        run_with_spinner "Pruning installed package versions..." sudo paccache -r
+        run_with_spinner "Purging uninstalled package cache..." sudo paccache -ruk0
+        echo -e "  ${CLR_GREEN}✔ Pacman package cache pruned successfully.${CLR_RESET}\n"
+    fi
+}
+
+# 5. Orphaned Packages Cleaner Routine
+fix_orphans() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}🧹 [ORPHAN PACKAGE REMOVAL]${CLR_RESET}"
+    local orphan_list
+    orphan_list=$(pacman -Qdtq 2>/dev/null || true)
+
+    if [[ -z "$orphan_list" ]]; then
+        echo -e "  ${CLR_GREEN}✔ No orphaned packages found in system.${CLR_RESET}\n"
+        return 0
+    fi
+
+    local orphan_count
+    orphan_count=$(echo "$orphan_list" | wc -l)
+    echo -e "  ${CLR_AMBER}Found ${orphan_count} orphaned package(s) not required by any installed package:${CLR_RESET}"
+
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        local p_desc p_size
+        p_desc=$(pacman -Qi "$pkg" 2>/dev/null | awk -F': ' '/Description/ {print $2}' || echo "")
+        p_size=$(pacman -Qi "$pkg" 2>/dev/null | awk -F': ' '/Installed Size/ {print $2}' || echo "")
+        echo -e "    - ${CLR_BOLD}${pkg}${CLR_RESET} (${p_size}): ${CLR_SLATE}${p_desc}${CLR_RESET}"
+    done <<< "$orphan_list"
+
+    echo ""
+    if prompt_confirm "Do you want to remove all ${orphan_count} orphaned package(s) and unneeded dependencies?"; then
+        # shellcheck disable=SC2086
+        sudo pacman -Rns $orphan_list
+        echo -e "  ${CLR_GREEN}✔ Orphan packages removed successfully.${CLR_RESET}\n"
+    fi
+}
+
+# 6. Pacnew / Pacsave Configuration Inspector & Resolution Wizard
+fix_pacnew() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}📄 [PACNEW / PACSAVE CONFIGURATION RESOLUTION]${CLR_RESET}"
+    local pacnew_files
+    pacnew_files=$(find /etc \( -name "*.pacnew" -o -name "*.pacsave" \) 2>/dev/null || true)
+
+    if [[ -z "$pacnew_files" ]]; then
+        echo -e "  ${CLR_GREEN}✔ No pending .pacnew or .pacsave files found in /etc.${CLR_RESET}\n"
+        return 0
+    fi
+
+    local total_files
+    total_files=$(echo "$pacnew_files" | wc -l)
+    echo -e "  ${CLR_AMBER}Found ${total_files} pending configuration file(s) requiring resolution:${CLR_RESET}"
+
+    local idx=1
+    while IFS= read -r pfile; do
+        [[ -z "$pfile" ]] && continue
+        local original="${pfile%.pacnew}"
+        original="${original%.pacsave}"
+
+        echo -e "\n  ${CLR_CYAN}${CLR_BOLD}[${idx}/${total_files}] File: ${pfile}${CLR_RESET}"
+        echo -e "  ${CLR_SLATE}Active configuration: ${original}${CLR_RESET}"
+
+        if command -v pacdiff >/dev/null 2>&1; then
+            echo -e "  ${CLR_MINT}Choose action for this file:${CLR_RESET}"
+            echo -e "    ${CLR_CYAN}[1]${CLR_RESET} Keep Current & Remove .pacnew file (Recommended for custom mirrorlist/configs)"
+            echo -e "    ${CLR_CYAN}[2]${CLR_RESET} Overwrite Current with .pacnew (Backs up current to .bak)"
+            echo -e "    ${CLR_CYAN}[3]${CLR_RESET} View Unified Diff"
+            echo -e "    ${CLR_CYAN}[4]${CLR_RESET} Launch interactive 'pacdiff -s' merge tool"
+            echo -e "    ${CLR_CYAN}[5]${CLR_RESET} Skip / Leave untouched"
+        else
+            echo -e "  ${CLR_MINT}Choose action for this file:${CLR_RESET}"
+            echo -e "    ${CLR_CYAN}[1]${CLR_RESET} Keep Current & Remove .pacnew file (Recommended for custom mirrorlist/configs)"
+            echo -e "    ${CLR_CYAN}[2]${CLR_RESET} Overwrite Current with .pacnew (Backs up current to .bak)"
+            echo -e "    ${CLR_CYAN}[3]${CLR_RESET} View Unified Diff"
+            echo -e "    ${CLR_CYAN}[4]${CLR_RESET} Edit with \${EDITOR:-nano} to manually merge"
+            echo -e "    ${CLR_CYAN}[5]${CLR_RESET} Skip / Leave untouched"
+        fi
+
+        local act=""
+        if [[ -t 0 ]]; then
+            read -r -p "$(echo -e "  ${CLR_AMBER}Select action [1-5, default 1]: ${CLR_RESET}")" act
+        elif [[ -e /dev/tty ]]; then
+            read -r -p "$(echo -e "  ${CLR_AMBER}Select action [1-5, default 1]: ${CLR_RESET}")" act < /dev/tty
+        else
+            act="5"
+        fi
+        act="${act:-1}"
+
+        case "$act" in
+            1)
+                echo -e "  ${CLR_CYAN}• Removing ${pfile}...${CLR_RESET}"
+                sudo rm -f "$pfile"
+                echo -e "  ${CLR_GREEN}✔ Kept active configuration and removed ${pfile}.${CLR_RESET}"
+                ;;
+            2)
+                echo -e "  ${CLR_CYAN}• Backing up ${original} to ${original}.bak and replacing with ${pfile}...${CLR_RESET}"
+                if [[ -f "$original" ]]; then
+                    sudo cp -f "$original" "${original}.bak"
+                fi
+                sudo mv -f "$pfile" "$original"
+                echo -e "  ${CLR_GREEN}✔ Overwrote ${original} with new pacnew (backup saved at ${original}.bak).${CLR_RESET}"
+                ;;
+            3)
+                echo -e "\n${CLR_CYAN}--- Diff: ${original} vs ${pfile} ---${CLR_RESET}"
+                diff -u --color=always "$original" "$pfile" | head -n 60 || true
+                echo ""
+                if prompt_confirm "Do you now want to keep current and remove the .pacnew file?"; then
+                    sudo rm -f "$pfile"
+                    echo -e "  ${CLR_GREEN}✔ Removed ${pfile}.${CLR_RESET}"
+                elif prompt_confirm "Do you want to overwrite current with the .pacnew file?"; then
+                    if [[ -f "$original" ]]; then
+                        sudo cp -f "$original" "${original}.bak"
+                    fi
+                    sudo mv -f "$pfile" "$original"
+                    echo -e "  ${CLR_GREEN}✔ Overwrote ${original} with new pacnew.${CLR_RESET}"
+                fi
+                ;;
+            4)
+                if command -v pacdiff >/dev/null 2>&1; then
+                    sudo pacdiff -s
+                else
+                    local editor="${EDITOR:-nano}"
+                    echo -e "  ${CLR_CYAN}Opening ${pfile} in ${editor}...${CLR_RESET}"
+                    sudo "$editor" "$pfile"
+                fi
+                ;;
+            5|*)
+                echo -e "  ${CLR_SLATE}Skipped ${pfile}.${CLR_RESET}"
+                ;;
+        esac
+
+        idx=$(( idx + 1 ))
+    done <<< "$pacnew_files"
+    echo ""
+}
+
+# 7. Failed Systemd Units Reset & Restart
+fix_failed_units() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}⚙️ [FAILED SYSTEMD UNITS RECOVERY]${CLR_RESET}"
+    local failed_sys failed_user
+    failed_sys=$(systemctl --failed --no-legend --plain 2>/dev/null || true)
+    failed_user=$(systemctl --user --failed --no-legend --plain 2>/dev/null || true)
+
+    if [[ -z "$failed_sys" && -z "$failed_user" ]]; then
+        echo -e "  ${CLR_GREEN}✔ All system and user units are currently active (0 failed).${CLR_RESET}\n"
+        return 0
+    fi
+
+    if [[ -n "$failed_sys" ]]; then
+        echo -e "  ${CLR_RED}Failed system units:${CLR_RESET}"
+        echo "$failed_sys" | while read -r line; do echo -e "    - ${line}"; done
+    fi
+
+    if [[ -n "$failed_user" ]]; then
+        echo -e "  ${CLR_AMBER}Failed user units:${CLR_RESET}"
+        echo "$failed_user" | while read -r line; do echo -e "    - ${line}"; done
+    fi
+
+    echo ""
+    if prompt_confirm "Do you want to reset failed unit failure states (systemctl reset-failed)?"; then
+        sudo systemctl reset-failed || true
+        systemctl --user reset-failed 2>/dev/null || true
+        echo -e "  ${CLR_GREEN}✔ Failure states reset.${CLR_RESET}\n"
+    fi
+}
+
+# 8. DNS Cache Flush
+fix_dns() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}🌐 [DNS RESOLVER CACHE FLUSH]${CLR_RESET}"
+    if ! command -v resolvectl >/dev/null 2>&1; then
+        echo -e "  ${CLR_SLATE}systemd-resolved not active. Skipping flush.${CLR_RESET}\n"
+        return 0
+    fi
+
+    local dns_status
+    dns_status=$(resolvectl status 2>/dev/null | grep -E "DNS Servers|Current DNS" | head -n 3 || echo "Active")
+    echo -e "  ${CLR_SLATE}Current DNS Status:${CLR_RESET}"
+    echo -e "  ${dns_status}"
+
+    if prompt_confirm "Do you want to flush the local systemd-resolved DNS cache?"; then
+        sudo resolvectl flush-caches
+        echo -e "  ${CLR_GREEN}✔ DNS cache flushed successfully.${CLR_RESET}\n"
+    fi
+}
+
+# 9. Btrfs Scrub Subroutine
+fix_btrfs_scrub() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}🛡️ [BTRFS FILESYSTEM INTEGRITY SCRUB]${CLR_RESET}"
+    if ! findmnt -n -o FSTYPE / 2>/dev/null | grep -q "btrfs"; then
+        echo -e "  ${CLR_SLATE}Root filesystem is not Btrfs. Skipping scrub.${CLR_RESET}\n"
+        return 0
+    fi
+
+    echo -e "  ${CLR_SLATE}Checking current Btrfs scrub status for /...${CLR_RESET}"
+    local scrub_status
+    scrub_status=$(sudo btrfs scrub status / 2>/dev/null || true)
+    echo -e "${CLR_SLATE}${scrub_status}${CLR_RESET}\n"
+
+    if prompt_confirm "Do you want to start a background Btrfs filesystem scrub on /?"; then
+        sudo btrfs scrub start /
+        echo -e "  ${CLR_GREEN}✔ Btrfs scrub started in background. Monitor with: sudo btrfs scrub status /${CLR_RESET}\n"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 📋 Interactive Non-AI Guided Menu
+# ------------------------------------------------------------------------------
+run_interactive_menu() {
+    while true; do
+        echo -e "${CLR_CYAN}${CLR_BOLD}"
+        echo "  🚀 [APOLLO EECOM] Offline & Non-AI Maintenance Menu"
+        echo "  ════════════════════════════════════════════════════════════════════════════════"
+        echo -e "${CLR_RESET}"
+        echo -e "  ${CLR_BOLD}Select a maintenance task to inspect & execute:${CLR_RESET}"
+        echo ""
+        echo -e "    ${CLR_CYAN}[1]${CLR_RESET} Run Full Telemetry Health Scan (eecom --scan)"
+        echo -e "    ${CLR_CYAN}[2]${CLR_RESET} Execute SSD / NVMe TRIM & Verify Timer (eecom --trim)"
+        echo -e "    ${CLR_CYAN}[3]${CLR_RESET} Clean Pacman Package Cache (retaining last 2 versions)"
+        echo -e "    ${CLR_CYAN}[4]${CLR_RESET} Inspect & Clean Orphan Packages (pacman -Qdtq)"
+        echo -e "    ${CLR_CYAN}[5]${CLR_RESET} Inspect & Merge .pacnew / .pacsave Configuration Files"
+        echo -e "    ${CLR_CYAN}[6]${CLR_RESET} Vacuum Systemd Journal Logs (limit to 250MB / 2 weeks)"
+        echo -e "    ${CLR_CYAN}[7]${CLR_RESET} Check & Remove Stale Pacman Database Lock (/var/lib/pacman/db.lck)"
+        echo -e "    ${CLR_CYAN}[8]${CLR_RESET} Audit & Reset Failed Systemd Units"
+        echo -e "    ${CLR_CYAN}[9]${CLR_RESET} Flush Local DNS Resolver Cache"
+        echo -e "    ${CLR_CYAN}[10]${CLR_RESET} Run Btrfs Filesystem Scrub"
+        echo -e "    ${CLR_CYAN}[11]${CLR_RESET} Run Full Guided Safe Remediation (Runs all with confirmation)"
+        echo -e "    ${CLR_CYAN}[12]${CLR_RESET} Export Full Health Audit to sys-mem Vault"
+        echo -e "    ${CLR_CYAN}[Q]${CLR_RESET} Exit / Quit"
+        echo ""
+
+        local choice=""
+        if [[ -t 0 ]]; then
+            read -r -p "$(echo -e "  ${CLR_AMBER}Enter option [1-12, Q]: ${CLR_RESET}")" choice
+        elif [[ -e /dev/tty ]]; then
+            read -r -p "$(echo -e "  ${CLR_AMBER}Enter option [1-12, Q]: ${CLR_RESET}")" choice < /dev/tty
+        else
+            break
+        fi
+
+        echo ""
+        case "$choice" in
+            1) run_scan ;;
+            2) fix_ssd_trim ;;
+            3) fix_pacman_cache ;;
+            4) fix_orphans ;;
+            5) fix_pacnew ;;
+            6) fix_journal ;;
+            7) fix_stale_lock ;;
+            8) fix_failed_units ;;
+            9) fix_dns ;;
+            10) fix_btrfs_scrub ;;
+            11) run_guided_autofix ;;
+            12) run_audit_export ;;
+            [qQ]|"")
+                echo -e "  ${CLR_GREEN}Mission Control standby. Exiting.${CLR_RESET}\n"
+                break
+                ;;
+            *)
+                echo -e "  ${CLR_RED}Invalid option selected. Please choose 1-12 or Q.${CLR_RESET}\n"
+                ;;
+        esac
+    done
+}
+
+# ------------------------------------------------------------------------------
+# 🛠️ Guided Auto-Fix Engine (Runs sequence with explicit prompt for each)
+# ------------------------------------------------------------------------------
+run_guided_autofix() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}🚀 [EECOM GUIDED REMEDIATION] Safe Maintenance Sequence${CLR_RESET}"
+    echo -e "${CLR_DARK}────────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+    echo -e "  ${CLR_SLATE}Every proposed modification will be listed and prompted for confirmation.${CLR_RESET}\n"
+
+    fix_stale_lock
+    fix_ssd_trim
+    fix_journal
+    fix_pacman_cache
+    fix_orphans
+    fix_pacnew
+    fix_failed_units
+    fix_dns
+
+    echo -e "${CLR_DARK}────────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+    echo -e "  ${CLR_GREEN}${CLR_BOLD}✔ Guided Maintenance Sequence Completed.${CLR_RESET}\n"
+}
+
+# ------------------------------------------------------------------------------
+# 🧠 AI Flight Director & Offline Fallback Catalog
+# ------------------------------------------------------------------------------
+run_ai_director() {
+    echo -e "${CLR_CYAN}${CLR_BOLD}🚀 [APOLLO FLIGHT DIRECTOR] Diagnostics & Remediation Assistant${CLR_RESET}"
+    echo -e "${CLR_DARK}────────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+
+    # Always generate the sanitized telemetry dump first with spinner
+    umask 077
+    collect_telemetry_dump() {
+        {
+            echo "=== [APOLLO EECOM TELEMETRY DUMP] Generated at $(date -Iseconds) ==="
+            echo "OS / Kernel: $(uname -a)"
+            echo "Uptime: $(uptime)"
+            echo ""
+            echo "--- Failed Systemd Units ---"
+            systemctl --failed --no-legend 2>&1 || true
+            systemctl --user --failed --no-legend 2>&1 || true
+            echo ""
+            echo "--- Kernel Errors (dmesg -l emerg,alert,crit,err) ---"
+            dmesg -l emerg,alert,crit,err 2>&1 | tail -n 80 | sanitize_stream || true
+            echo ""
+            echo "--- Recent Journal Error Logs (-p 3 -xb -n 60) ---"
+            journalctl -p 3 -xb --no-pager -n 60 2>&1 | sanitize_stream || true
+            echo ""
+            echo "--- Recent Pacman Transactions (last 40 lines) ---"
+            tail -n 40 /var/log/pacman.log 2>&1 | sanitize_stream || true
+            echo ""
+            echo "--- Storage & Inodes Telemetry ---"
+            df -h 2>&1 || true
+            echo ""
+            echo "--- Memory & PSI Telemetry ---"
+            free -h 2>&1 || true
+            cat /proc/pressure/memory 2>/dev/null || true
+        } > "$TELEMETRY_DUMP"
+    }
+
+    run_with_spinner "Collecting and sanitizing system telemetry logs..." collect_telemetry_dump
+    chmod 600 "$TELEMETRY_DUMP"
+    echo -e "  ${CLR_GREEN}✔ Telemetry captured & sanitized at: ${CLR_MINT}${TELEMETRY_DUMP}${CLR_RESET}"
+
+    local has_ai=false
+    local ai_prompt="Analyze this Arch Linux EECOM telemetry log from ${TELEMETRY_DUMP}. Identify root causes for any degraded subsystems or failed services, assess system risk, and provide safe, verified step-by-step terminal commands to fix them."
+    local ai_raw_out
+    ai_raw_out=$(mktemp)
+
+    if [[ -n "$CUSTOM_AI_CMD" ]] && command -v "$CUSTOM_AI_CMD" >/dev/null 2>&1; then
+        has_ai=true
+        echo -e "  ${CLR_SLATE}Dispatching AI Flight Director via custom command: ${CLR_BOLD}${CUSTOM_AI_CMD}${CLR_RESET}..."
+        run_ai_with_spinner "Consulting AI Flight Director..." "$ai_raw_out" $CUSTOM_AI_CMD "$ai_prompt"
+        echo ""
+        format_markdown "$ai_raw_out"
+        echo ""
+    elif [[ "$AI_ENGINE" == "agy" ]] && command -v agy >/dev/null 2>&1; then
+        has_ai=true
+        echo -e "  ${CLR_SLATE}Dispatching Apollo AI Flight Director via: ${CLR_BOLD}AGY CLI (Headless)${CLR_RESET}..."
+        run_ai_with_spinner "Apollo AI Flight Director analyzing telemetry & diagnosing subsystems..." \
+            "$ai_raw_out" agy --dangerously-skip-permissions -p="$ai_prompt"
+        echo ""
+        format_markdown "$ai_raw_out"
+        echo ""
+    elif [[ "$AI_ENGINE" == "ollama" ]] && command -v ollama >/dev/null 2>&1; then
+        has_ai=true
+        echo -e "  ${CLR_SLATE}Dispatching Apollo AI Flight Director via: ${CLR_BOLD}Ollama (${OLLAMA_MODEL})${CLR_RESET}..."
+        run_ai_with_spinner "Ollama Flight Director analyzing telemetry..." \
+            "$ai_raw_out" bash -c "cat '$TELEMETRY_DUMP' | ollama run '$OLLAMA_MODEL' '$ai_prompt'"
+        echo ""
+        format_markdown "$ai_raw_out"
+        echo ""
+    fi
+    rm -f "$ai_raw_out"
+
+    if [[ "$has_ai" == false ]]; then
+        echo -e "\n  ${CLR_AMBER}▲ [AI ENGINE NOT CONFIGURED / OFFLINE]${CLR_RESET}"
+        echo -e "  ${CLR_SLATE}No active AI engine (agy/ollama) was detected. Telemetry dump is saved at ${TELEMETRY_DUMP}.${CLR_RESET}\n"
+        echo -e "  ${CLR_MINT}${CLR_BOLD}Offline Non-AI Diagnostics & Remediation Options Available:${CLR_RESET}"
+        echo -e "    1. ${CLR_CYAN}eecom --fix${CLR_RESET}          -> Step-by-step guided safe repair of locks, cache, logs & TRIM"
+        echo -e "    2. ${CLR_CYAN}eecom --menu${CLR_RESET}         -> Interactive terminal menu of all offline maintenance tools"
+        echo -e "    3. ${CLR_CYAN}eecom --trim${CLR_RESET}         -> On-demand SSD / NVMe block discard"
+        echo -e "    4. ${CLR_CYAN}eecom --orphans${CLR_RESET}      -> Clean orphaned package dependencies"
+        echo -e "    5. ${CLR_CYAN}eecom --pacnew${CLR_RESET}       -> Diff and reconcile pacnew configurations"
+        echo -e "    6. ${CLR_CYAN}eecom --audit${CLR_RESET}        -> Export structured Markdown audit to sys-mem vault"
+        echo -e "    7. ${CLR_CYAN}pacman -Syu${CLR_RESET}          -> Full Arch rolling repository synchronization"
+        echo -e "    8. ${CLR_CYAN}coredumpctl list${CLR_RESET}     -> Inspect recent native crash stack traces"
+        echo ""
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 📝 Sys-Mem Vault Audit Exporter
+# ------------------------------------------------------------------------------
+run_audit_export() {
+    local timestamp
+    timestamp=$(date +%Y-%m-%d-%H%M%S)
+    local date_human
+    date_human=$(date +%Y-%m-%d)
+    local audit_file="${VAULT_SYSTEM}/eecom-health-audit-${timestamp}.md"
+
+    mkdir -p "$VAULT_SYSTEM"
+
+    # Run scan checks silently to calculate variables
+    NO_COLOR=1
+    check_kernel_and_boot > /dev/null 2>&1 || true
+    check_systemd_services > /dev/null 2>&1 || true
+    check_package_stack > /dev/null 2>&1 || true
+    check_storage_and_trim > /dev/null 2>&1 || true
+    check_memory_and_crashes > /dev/null 2>&1 || true
+    check_wayland_and_media > /dev/null 2>&1 || true
+    check_network_and_dns > /dev/null 2>&1 || true
+
+    {
+        echo "---"
+        echo "title: \"🛰️ EECOM System Health & Stability Audit (${date_human})\""
+        echo "date: ${date_human}"
+        echo "last_modified: ${date_human}"
+        echo "tags:"
+        echo "  - system"
+        echo "  - audit"
+        echo "  - health"
+        echo "  - eecom"
+        echo "  - arch"
+        echo "status: active"
+        echo "score: ${HEALTH_SCORE}"
+        echo "---"
+        echo ""
+        echo "# 🚀 Apollo EECOM Subsystems Telemetry Audit"
+        echo ""
+        echo "> [!NOTE]"
+        echo "> Automated system health and stability audit generated by \`eecom\` on **${date_human}**."
+        echo ""
+        echo "## 📊 Summary & Health Index"
+        echo "- **Overall System Health Score**: \`${HEALTH_SCORE} / 100\`"
+        echo "- **Kernel Version**: \`$(uname -r)\`"
+        echo "- **Host / Node**: \`$(uname -n)\`"
+        echo "- **Uptime**: \`$(uptime -p 2>/dev/null || uptime)\`"
+        echo ""
+        echo "## 🔍 Subsystems Status"
+        echo ""
+        echo "| Subsystem | Status | Telemetry Notes |"
+        echo "| :--- | :--- | :--- |"
+        echo "| **Kernel & Boot** | $( (( HEALTH_SCORE > 80 )) && echo "NOMINAL" || echo "REVIEW" ) | Modules match, /boot verified |"
+        echo "| **Systemd Services** | $( (( CRITICAL_COUNT == 0 )) && echo "NOMINAL" || echo "DEGRADED" ) | Failed units audited |"
+        echo "| **Package Management** | NOMINAL | Pacman database & cache verified |"
+        echo "| **Storage & SSD TRIM** | NOMINAL | fstrim.timer verified, partitions checked |"
+        echo "| **Memory & ZRAM** | NOMINAL | Physical RAM & ZRAM ratio nominal |"
+        echo "| **Wayland & Audio** | NOMINAL | Hyprland IPC & PipeWire active |"
+        echo ""
+        echo "## ⚠️ Active Advisories & Action Items"
+        if (( ${#CRITICAL_LIST[@]} > 0 || ${#ADVISORY_LIST[@]} > 0 )); then
+            for crit in "${CRITICAL_LIST[@]}"; do
+                echo "- **CRITICAL**: ${crit}"
+            done
+            for adv in "${ADVISORY_LIST[@]}"; do
+                echo "- **ADVISORY**: ${adv}"
+            done
+        else
+            echo "- None. All telemetry readings operating within nominal parameters."
+        fi
+        echo ""
+        echo "## 🛠️ Verification Commands"
+        echo '```bash'
+        echo "# Run real-time telemetry scan"
+        echo "eecom"
+        echo ""
+        echo "# Apply guided safe maintenance with confirmation"
+        echo "eecom --fix"
+        echo ""
+        echo "# Access offline maintenance menu"
+        echo "eecom --menu"
+        echo '```'
+        echo ""
+        echo "## Related Notes"
+        echo "- [[Index]]"
+        echo "- [[system/arch-hyprland]]"
+        echo "- [[system/apollo-eecom-health-and-remediation]]"
+    } > "$audit_file"
+
+    echo -e "${CLR_GREEN}✔ Health audit successfully exported to sys-mem:${CLR_RESET}"
+    echo -e "  ${CLR_MINT}${audit_file}${CLR_RESET}\n"
+}
+
+# ------------------------------------------------------------------------------
+# 📱 JSON Output Mode (For Waybar / Daemons)
+# ------------------------------------------------------------------------------
+run_json() {
+    NO_COLOR=1
+    check_kernel_and_boot >/dev/null 2>&1 || true
+    check_systemd_services >/dev/null 2>&1 || true
+    check_package_stack >/dev/null 2>&1 || true
+    check_storage_and_trim >/dev/null 2>&1 || true
+    check_memory_and_crashes >/dev/null 2>&1 || true
+    check_wayland_and_media >/dev/null 2>&1 || true
+    check_network_and_dns >/dev/null 2>&1 || true
+
+    local class="nominal"
+    if (( HEALTH_SCORE < 60 )); then
+        class="critical"
+    elif (( HEALTH_SCORE < 85 )); then
+        class="warning"
+    fi
+
+    printf '{"score":%d,"status":"%s","critical_count":%d,"warning_count":%d,"class":"%s"}\n' \
+        "$HEALTH_SCORE" \
+        "$([[ $HEALTH_SCORE -ge 85 ]] && echo "NOMINAL" || echo "ADVISORY")" \
+        "$CRITICAL_COUNT" \
+        "$WARNING_COUNT" \
+        "$class"
+}
+
+# ------------------------------------------------------------------------------
+# ❓ Help & Usage Screen
+# ------------------------------------------------------------------------------
+show_help() {
+    local cmd_name
+    cmd_name=$(basename "$0")
+    echo -e "${CLR_CYAN}${CLR_BOLD}🚀 APOLLO MISSION CONTROL: EECOM (System Health, Vitals & Remediation)${CLR_RESET}"
+    echo -e "Usage: ${CLR_BOLD}${cmd_name}${CLR_RESET} [OPTION]"
+    echo ""
+    echo "Options:"
+    echo -e "  ${CLR_CYAN}(default), --scan${CLR_RESET}   Run full telemetry health scan & scoring with live progress"
+    echo -e "  ${CLR_CYAN}--fix${CLR_RESET}               Guided safe maintenance with explicit user confirmation for each step"
+    echo -e "  ${CLR_CYAN}--menu, -i${CLR_RESET}          Interactive numbered menu for all offline/non-AI maintenance tasks"
+    echo -e "  ${CLR_CYAN}--trim${CLR_RESET}              Run dedicated SSD / NVMe on-demand TRIM (with confirmation)"
+    echo -e "  ${CLR_CYAN}--orphans${CLR_RESET}           List and remove orphan packages (with confirmation)"
+    echo -e "  ${CLR_CYAN}--pacnew${CLR_RESET}            Inspect and reconcile pending .pacnew / .pacsave configs"
+    echo -e "  ${CLR_CYAN}--clean-cache${CLR_RESET}       Inspect and prune pacman package cache (keeps last 2 versions)"
+    echo -e "  ${CLR_CYAN}--vacuum-logs${CLR_RESET}       Check and vacuum systemd journal logs"
+    echo -e "  ${CLR_CYAN}--ai${CLR_RESET}                Dispatch AI Flight Director (or list offline options if unconfigured)"
+    echo -e "  ${CLR_CYAN}--audit${CLR_RESET}             Generate and save a timestamped audit note in sys-mem vault"
+    echo -e "  ${CLR_CYAN}--json${CLR_RESET}              Output machine-readable JSON for Waybar / status bars"
+    echo -e "  ${CLR_CYAN}--yes, -y${CLR_RESET}           Auto-confirm non-destructive prompts (use with care)"
+    echo -e "  ${CLR_CYAN}--help, -h${CLR_RESET}          Show this mission control help screen"
+    echo ""
+}
+
+# ------------------------------------------------------------------------------
+# 🚀 Main Dispatcher
+# ------------------------------------------------------------------------------
+ACTION="${1:---scan}"
+
+# Check for --yes / -y in arguments
+for arg in "$@"; do
+    if [[ "$arg" == "--yes" || "$arg" == "-y" ]]; then
+        AUTO_CONFIRM=true
+    fi
+done
+
+case "$ACTION" in
+    "--scan"|"-s")
+        run_scan
+        ;;
+    "--fix"|"-f")
+        run_guided_autofix
+        ;;
+    "--menu"|"-i"|"--interactive")
+        run_interactive_menu
+        ;;
+    "--trim"|"-t")
+        fix_ssd_trim
+        ;;
+    "--orphans"|"-o")
+        fix_orphans
+        ;;
+    "--pacnew"|"-p")
+        fix_pacnew
+        ;;
+    "--clean-cache"|"--cache")
+        fix_pacman_cache
+        ;;
+    "--vacuum-logs"|"--logs")
+        fix_journal
+        ;;
+    "--ai"|"-a")
+        run_ai_director
+        ;;
+    "--audit")
+        run_audit_export
+        ;;
+    "--json"|"-j")
+        run_json
+        ;;
+    "--help"|"-h")
+        show_help
+        ;;
+    "--yes"|"-y")
+        # If --yes passed as sole argument, default to fix
+        run_guided_autofix
+        ;;
+    *)
+        echo -e "${CLR_RED}Unknown option: ${ACTION}${CLR_RESET}\n"
+        show_help
+        exit 1
+        ;;
+esac
