@@ -281,17 +281,27 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 ---
 
-## 🛰️ 9. ISS Real-Time Orbital Tracker (`space-iss-dialog`)
+## 🛰️ 9. ISS Real-Time Orbital Tracker & 7-Day Space Launch Manifest (`space-iss-dialog`)
 
 **Hotkeys**: Waybar ISS pill / `space-iss-dialog`
 
-
+### 1. ISS Orbital Telemetry & 19-Node Ground Track
 
 ![ISS Real-Time Orbital Tracker](assets/wiki_iss_dialog.png)
 
+- **High-Precision World Map**: 2:1 Equirectangular Cairo vector projection with landmass coastlines and latitude/longitude coordinate grid.
+- **Real-Time SGP4 Tracking**: 19-node ground track projection, live ISS position marker, and 2,200 km visibility footprint circle.
+- **Home Base & Optical Passes**: Configurable ground station city (`João Pessoa, BR`, `Houston`, `London`), 24-hour pass prediction with countdown timers, optical sighting flare calculations (Eclipsed / Sunlit), and visual `[ ISS ACQUIRED IN FOOTPRINT ]` alerts.
 
+### 2. 🚀 7-Day Space Launch Manifest & Mission Radar
 
-- Live ISS orbital tracking coordinates, altitude, velocity, and astronaut crew roster.
+![7-Day Space Launch Manifest](assets/wiki_iss_launches.png)
+
+- **Upcoming Mission Manifest**: Real-time launch data parsed from Launch Library 2 with automatic 24-hour background synchronization.
+- **Interactive Pad Targeting**: Clicking any mission targets its launch complex on the world map, plotting coordinates with an amber pulsing target crosshair ring (e.g. SLC-4E at Vandenberg, Mahia Peninsula, Jiuquan SLC).
+- **Mission HUD Overlay**: Live T-minus countdown ticker (`⏱ T- 00d 00h 00m 00s`), mission provider, vehicle, launch status badges (`GO FOR LAUNCH` / `TBC`), and pad location.
+- **Favorite Launches (`★`)**: One-click bookmarking saved persistently to `~/.config/spaceera/favorite-launches.json`.
+- **Automated Desktop Notifications**: Background telemetry daemon dispatches alerts at `T-1 Hour`, `T-10 Minutes` (with Quindar sound engine tone), and `T-1 Minute` prior to liftoff.
 
 ---
 

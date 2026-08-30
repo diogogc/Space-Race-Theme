@@ -88,11 +88,12 @@ The environment features four authentic vintage flight-deck profiles switchable 
 
 <br/>
 
-### 🛰️ ISS Real-Time Orbital Tracker & Mission Tools Studio
+### 🛰️ ISS Real-Time Orbital Tracker & 7-Day Space Launch Manifest
 <p align="center">
   <img src="assets/09_iss_orbital_tracker.png" alt="ISS Tracker" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
-  <img src="assets/08_tools_studio.png" alt="Tools Studio" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+  <img src="assets/16_launch_manifest.png" alt="7-Day Space Launch Manifest" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
 </p>
+<p align="center"><i>Real-time 19-node SGP4 orbital tracking, home base pass predictions, Launch Library 2 schedule, and interactive pad coordinate targeting.</i></p>
 
 ### 🕹️ 8-Bit Retro Space Multi-Scene Screensaver
 <p align="center">
@@ -180,8 +181,9 @@ The environment includes a rich suite of native Python GTK3/Cairo avionics instr
    - Apollo Command Module vertical edgewise needle meters, DC Main Bus A/B/Volts telemetry, flight power stage selector, and display brightness slider.
 9. **`space-capcom-dialog` (CAPCOM Audio & Radio Intercom)**:
    - Dual VU audio meters with peak hold bars, WirePlumber input/output sink selectors, and Quindar audio telemetry test tone generator.
-10. **`space-iss-dialog` & `space-iss-telemetry` (ISS Orbital Tracker)**:
-    - Real-time ISS ground track coordinates, orbital altitude, speed, and astronaut crew roster.
+10. **`space-iss-dialog` & `space-iss-telemetry` (ISS Orbital Tracker & 7-Day Launch Manifest)**:
+    - **ISS Orbital Tracking**: Real-time 19-node SGP4 ground track projection, dynamic 2,200 km visibility footprint, optical flare predictions, and home ground station pass countdowns.
+    - **7-Day Launch Manifest (`🚀`)**: Upcoming mission schedules parsed from Launch Library 2, live T-minus countdowns, interactive pad map targeting with animated crosshairs, persistent favorite bookmarks (`★`), and automated desktop notifications (`T-1h`, `T-10m`, `T-1m`).
 11. **`space-screensaver` (8-Bit Retro Space Multi-Scene Screensaver)**:
     - Nearest-neighbor $480 \times 270$ retro pixel scaling across 5 historical spaceflight simulation scenes with lock-on-wake support.
 12. **`space-theme-update` (Theme & Plugin Update Engine)**:
