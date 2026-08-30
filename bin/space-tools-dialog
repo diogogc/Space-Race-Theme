@@ -229,15 +229,18 @@ class SpaceToolsDialog(Gtk.Window):
         self.connect("key-press-event", self.on_key_press)
 
         if initial_tab in ["eecom", "vitals", "health", "scan", "trim", "fix"]:
-            self.switch_tab("eecom")
+            self.active_tab = "eecom"
         elif initial_tab in ["system", "recovery"]:
-            self.switch_tab("system")
-        elif initial_tab in ["display", "monitors"]:
-            self.switch_tab("display")
+            self.active_tab = "system"
+        elif initial_tab in ["display", "monitors", "radar"]:
+            self.active_tab = "display"
         elif initial_view == "rec":
-            self.switch_to_rec_view()
+            self.active_tab = "capture"
+            self.current_view = "rec"
         else:
-            self.switch_tab("capture")
+            self.active_tab = "capture"
+
+        GLib.idle_add(lambda: self.switch_to_rec_view() if self.current_view == "rec" else self.switch_tab(self.active_tab))
 
     def apply_css(self):
         css = f"""
@@ -1707,6 +1710,10 @@ def main():
     win = SpaceToolsDialog(initial_tab=init_tab, initial_view=init_view)
     win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
     win.show_all()
+    if init_view == "rec":
+        win.switch_to_rec_view()
+    else:
+        win.switch_tab(init_tab)
     Gtk.main()
 
 if __name__ == "__main__":

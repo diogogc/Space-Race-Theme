@@ -176,15 +176,30 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 **Hotkeys**: `SUPER + SHIFT + N` / Click Waybar Wi-Fi module
 
+### 1. S-Meter Analog Receiver & Wi-Fi Station Scanner
 <div align="center">
-  <img src="assets/wiki_network_dialog.png" alt="Communications & S-Band Wi-Fi Radar" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+  <img src="assets/wiki_network_main.png" alt="Communications & S-Band Wi-Fi Radar" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
 </div>
 
-- **Analog S-Meter Dial**: Cairo-rendered RF signal gauge calibrated in S-Units (`S1`-`S9+30dB`).
+- **Analog S-Meter Dial**: Cairo-rendered RF signal gauge calibrated in discrete S-Units (`S1`-`S9+30dB`).
 - **Station Scanner**: Discovered Wi-Fi networks with signal rating and encryption badges.
-- **RF Comm Diagnostics**: Ping latency, packet loss, download/upload bandwidth testing.
-- **Persistent DNS Selector**: One-click DNS engagement (Cloudflare, Quad9, Google, AdGuard, DHCP).
-- **VPN Dispatch**: Manage WireGuard and OpenVPN connections.
+
+### 2. RF Propagation Comm Diagnostics & Ground DNS Relays
+<div align="center">
+  <img src="assets/wiki_network_test.png" alt="RF Comm Diagnostics and DNS Relays" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</div>
+
+- **Speed & Latency Telemetry**: Round-trip propagation ping latency, packet loss, download speed, and upload throughput.
+- **Persistent DNS Selector**: One-click DNS engagement (Cloudflare, Quad9, Google, AdGuard, DHCP) across all network profiles.
+
+### 3. Encrypted VPN Tunnel Dispatch & Bluetooth Manager
+<div align="center">
+  <img src="assets/wiki_network_vpn.png" alt="VPN Tunnel Dispatch" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+  <img src="assets/wiki_network_bluetooth.png" alt="Bluetooth Subsystem" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+</div>
+
+- **VPN Hub**: OpenVPN and WireGuard encrypted connection dispatch and configuration editor.
+- **Bluetooth Avionics**: Nearby device discovery, pair, trust, and connection toggles.
 
 ---
 

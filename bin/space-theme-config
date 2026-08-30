@@ -298,7 +298,7 @@ class SpaceThemeConfigDialog(Gtk.Window):
         self.apply_css()
         self.build_ui()
         self.connect("key-press-event", self.on_key_press)
-        self.switch_tab(initial_tab)
+        GLib.idle_add(lambda: self.switch_tab(self.active_tab))
 
     def apply_css(self):
         css = f"""
@@ -1496,6 +1496,7 @@ def main():
     win = SpaceThemeConfigDialog(initial_tab=init_tab)
     win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
     win.show_all()
+    win.switch_tab(init_tab)
     Gtk.main()
 
 if __name__ == "__main__":

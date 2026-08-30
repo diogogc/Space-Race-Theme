@@ -360,9 +360,10 @@ class ApolloRfSignalGauge(Gtk.DrawingArea):
         return False
 
 class SpaceNetworkDialog(Gtk.Window):
-    def __init__(self):
+    def __init__(self, initial_view="main"):
+        GLib.set_prgname("space-network-dialog")
+        GLib.set_application_name("Apollo Mission Control Comms & Telemetry")
         super().__init__(title="Apollo Mission Control Comms & Telemetry")
-        self.set_wmclass("space-network-dialog", "space-network-dialog")
         self.set_role("dialog")
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_decorated(False)
@@ -371,6 +372,7 @@ class SpaceNetworkDialog(Gtk.Window):
 
         self.theme_name = get_theme_name()
         self.pal = THEMES.get(self.theme_name, THEMES["nasa"])
+        self.initial_view = initial_view
         self.stations = []
         self.saved_connections = {}
         self.active_ssid = ""
@@ -400,6 +402,15 @@ class SpaceNetworkDialog(Gtk.Window):
         self.scan_wifi_networks()
         GLib.timeout_add(2000, self.update_network_status)
         GLib.timeout_add(3000, self.update_bluetooth_status)
+
+        if self.initial_view in ["comm_test", "test", "dns"]:
+            GLib.idle_add(self.open_comm_test_view)
+        elif self.initial_view in ["vpn", "tunnel"]:
+            GLib.idle_add(self.open_vpn_view)
+        elif self.initial_view in ["bt", "bluetooth"]:
+            GLib.idle_add(self.open_bluetooth_view)
+        elif self.initial_view in ["hidden", "hidden_ssid"]:
+            GLib.idle_add(self.open_hidden_view)
 
     def apply_css(self):
         css = f"""
@@ -2393,9 +2404,29 @@ class SpaceNetworkDialog(Gtk.Window):
 
 def main():
     check_singleton()
-    win = SpaceNetworkDialog()
+    init_view = "main"
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower().strip("-")
+        if arg in ["comm_test", "test", "dns", "speed"]:
+            init_view = "comm_test"
+        elif arg in ["vpn", "tunnel"]:
+            init_view = "vpn"
+        elif arg in ["bt", "bluetooth"]:
+            init_view = "bluetooth"
+        elif arg in ["hidden", "hidden_ssid"]:
+            init_view = "hidden"
+
+    win = SpaceNetworkDialog(initial_view=init_view)
     win.connect("destroy", lambda w: (cleanup(), Gtk.main_quit()))
     win.show_all()
+    if init_view in ["comm_test", "test", "dns", "speed"]:
+        win.open_comm_test_view()
+    elif init_view in ["vpn", "tunnel"]:
+        win.open_vpn_view()
+    elif init_view in ["bt", "bluetooth"]:
+        win.open_bluetooth_view()
+    elif init_view in ["hidden", "hidden_ssid"]:
+        win.open_hidden_view()
     Gtk.main()
 
 if __name__ == "__main__":

@@ -42,12 +42,12 @@ graph TD
 
 ### 💻 Standalone Terminal Diagnostic Suite (`eecom --scan` / `eecom --menu`)
 <div align="center">
-  <img src="assets/wiki_eecom_tui.png" alt="EECOM Terminal Diagnostic Scan" width="90%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+  <img src="assets/wiki_eecom_tui.png" alt="EECOM Terminal Diagnostic Scan" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
+  <img src="assets/wiki_eecom_menu.png" alt="EECOM Interactive Maintenance Menu" width="48%" style="border-radius: 6px; border: 1px solid #ffb00055;" />
 </div>
 
-- Real-time animated progress bars during subsystem audits.
-- Async phosphor spinners during disk-intensive and AI operations.
-- Color-coded subsystem vitals: `[✔] NOMINAL`, `[▲] ADVISORY`, `[✖] CRITICAL`.
+- **Diagnostic Scan (`eecom --scan`)**: Real-time animated progress bars during subsystem audits, async phosphor spinners during disk-intensive and AI operations, and color-coded health score index (`[✔] NOMINAL`, `[▲] ADVISORY`, `[✖] CRITICAL`).
+- **Interactive Maintenance Console (`eecom --menu`)**: Numbered menu for on-demand SSD TRIM, package orphan purging, `.pacnew` reconciliation, cache cleanup, and journal vacuuming.
 
 ---
 
