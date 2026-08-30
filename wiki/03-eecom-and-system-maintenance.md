@@ -2,6 +2,9 @@
 
 The **Electrical, Environmental, and Consumables Operations Manager (EECOM)** is Apollo Mission Control's core system health, stability, SSD maintenance, and automated remediation suite.
 
+> [!TIP]
+> EECOM is also maintained as an independent open-source project and standalone CLI repository at [github.com/diogogc/eecom](https://github.com/diogogc/eecom).
+
 ---
 
 ## 🎯 1. Operational Flow & Safety Standards

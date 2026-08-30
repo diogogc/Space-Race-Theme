@@ -171,6 +171,7 @@ The environment includes a rich suite of native Python GTK3/Cairo avionics instr
    - Tabbed management console for switching themes, browsing historical wallpapers, tuning screensaver delays, and toggling standalone plugins.
 5. **`space-eecom` (System Vitals & Remediation Suite)**:
    - Standalone CLI/TUI suite with progress bars, spinners, ANSI markdown formatting, guided safe maintenance (`eecom --fix`), non-AI maintenance menu (`eecom --menu`), SSD TRIM (`eecom --trim`), and AI flight director (`eecom --ai`).
+   - ⚡ **Standalone GitHub Repository**: [diogogc/eecom](https://github.com/diogogc/eecom)
 6. **`space-network-dialog` (Communications & S-Band Wi-Fi Radar)**:
    - S-Meter RF dial, station scanner, propagation ping speedtest, persistent DNS profiles across all network interfaces, and VPN tunnel dispatch.
 7. **`space-telemetry-dialog` (Hardware Telemetry & Task Abort)**:
