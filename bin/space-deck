@@ -1,0 +1,1396 @@
+#!/usr/bin/env python3
+"""
+Space Deck — Universal Human Interface & Input Controller
+Part of the Space Race Desktop Theme Suite.
+Zero-white background, multi-threaded hardware discovery, live Hyprland IPC,
+zero font shadows, exact Comms Telemetry button toolbar, and zero-scroll streamlined layout.
+"""
+import sys, os, subprocess, signal, math, time, json, threading, struct, fcntl
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+import cairo
+
+PID_FILE = f"/tmp/space-deck-{os.getuid()}.pid"
+CONFIG_DIR = os.path.expanduser("~/.config/space-deck")
+STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
+
+# ==============================================================================
+# Theme Palettes & Styling (Zero-White-Background Policy)
+# ==============================================================================
+THEMES = {
+    "nasa": {
+        "bg": "#14171d",
+        "bg_panel": "#11161f",
+        "bg_card": "#1c222b",
+        "bg_bezel": "#0a0d12",
+        "track_bg": "#030406",
+        "border": "#ffb000",
+        "border_dim": "#2e3846",
+        "text_main": "#ffb000",
+        "text_sub": "#e2e8f0",
+        "text_dim": "#8c9ba5",
+        "btn_bg": "#10141a",
+        "btn_border": "#2e3846",
+        "btn_hover": "#263040",
+        "accent": "#ffb000",
+        "green": "#2ef788",
+        "yellow": "#ffb000",
+        "red": "#ff3333",
+        "cyan": "#00d2ff",
+        "radius": "4px",
+    },
+    "crt-amber": {
+        "bg": "#0e1014",
+        "bg_panel": "#0d0f14",
+        "bg_card": "#161920",
+        "bg_bezel": "#060709",
+        "track_bg": "#020304",
+        "border": "#ff9e00",
+        "border_dim": "#402800",
+        "text_main": "#ff9e00",
+        "text_sub": "#e68e00",
+        "text_dim": "#734900",
+        "btn_bg": "#08090c",
+        "btn_border": "#402800",
+        "btn_hover": "#241908",
+        "accent": "#ff9e00",
+        "green": "#ff9e00",
+        "yellow": "#cca000",
+        "red": "#ff5533",
+        "cyan": "#ffbb33",
+        "radius": "0px",
+    },
+    "crt-green": {
+        "bg": "#0a100a",
+        "bg_panel": "#0a110a",
+        "bg_card": "#0f1c0f",
+        "bg_bezel": "#040704",
+        "track_bg": "#010301",
+        "border": "#33ff33",
+        "border_dim": "#0f3d0f",
+        "text_main": "#33ff33",
+        "text_sub": "#28cc28",
+        "text_dim": "#186618",
+        "btn_bg": "#050a05",
+        "btn_border": "#0f3d0f",
+        "btn_hover": "#102610",
+        "accent": "#33ff33",
+        "green": "#33ff33",
+        "yellow": "#aaff33",
+        "red": "#ff4444",
+        "cyan": "#55ff55",
+        "radius": "0px",
+    },
+    "kosmos-vfd": {
+        "bg": "#0e1e1a",
+        "bg_panel": "#0a1815",
+        "bg_card": "#152d27",
+        "bg_bezel": "#050d0b",
+        "track_bg": "#020504",
+        "border": "#48e5c2",
+        "border_dim": "#1f6656",
+        "text_main": "#48e5c2",
+        "text_sub": "#d0fbf3",
+        "text_dim": "#226b5c",
+        "btn_bg": "#081411",
+        "btn_border": "#1f6656",
+        "btn_hover": "#173830",
+        "accent": "#48e5c2",
+        "green": "#48e5c2",
+        "yellow": "#e5d448",
+        "red": "#ff4860",
+        "cyan": "#48e5c2",
+        "radius": "3px",
+    }
+}
+
+def get_active_theme_key():
+    path = os.path.expanduser("~/.config/themes/current_theme")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                name = f.read().strip().lower()
+                if "amber" in name: return "crt-amber"
+                if "green" in name: return "crt-green"
+                if "kosmos" in name or "vfd" in name or "soviet" in name: return "kosmos-vfd"
+                return "nasa"
+        except Exception:
+            pass
+    return "nasa"
+
+# ==============================================================================
+# State Management
+# ==============================================================================
+def load_state():
+    if not os.path.exists(CONFIG_DIR):
+        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "disabled_devices": [],
+        "sensitivities": {},
+        "natural_scroll": {},
+        "accel_profiles": {},
+        "layouts": {},
+        "auto_disable_touchpad": False,
+        "active_profile": "CODING",
+        "selected_joystick": None
+    }
+
+def save_state(state):
+    try:
+        if not os.path.exists(CONFIG_DIR):
+            os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+        temp_file = f"{STATE_FILE}.tmp.{os.getpid()}"
+        with open(temp_file, "w") as f:
+            json.dump(state, f, indent=2)
+        os.chmod(temp_file, 0o600)
+        os.replace(temp_file, STATE_FILE)
+    except Exception as e:
+        print(f"Error saving state: {e}", file=sys.stderr)
+
+# ==============================================================================
+# Hyprland IPC & Hardware Helpers
+# ==============================================================================
+def run_hyprctl(args):
+    try:
+        res = subprocess.run(["hyprctl", "-j"] + args, capture_output=True, text=True, timeout=2.0)
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout)
+    except Exception:
+        pass
+    return None
+
+def dispatch_hypr_keyword(keyword, value):
+    try:
+        subprocess.Popen(["hyprctl", "keyword", keyword, value], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"IPC Error: {e}", file=sys.stderr)
+
+def get_connected_hardware():
+    data = run_hyprctl(["devices"])
+    if not data:
+        data = {"mice": [], "keyboards": [], "tablets": [], "switches": []}
+    
+    joysticks = []
+    js_dir = "/dev/input"
+    if os.path.exists(js_dir):
+        try:
+            for item in sorted(os.listdir(js_dir)):
+                if item.startswith("js"):
+                    dev_path = os.path.join(js_dir, item)
+                    name = f"Flight Stick / Gamepad ({item})"
+                    sys_name_path = f"/sys/class/input/{item}/device/name"
+                    if os.path.exists(sys_name_path):
+                        try:
+                            with open(sys_name_path) as f:
+                                name = f.read().strip()
+                        except Exception:
+                            pass
+                    
+                    num_axes = 2
+                    num_buttons = 4
+                    try:
+                        fd = os.open(dev_path, os.O_RDONLY | os.O_NONBLOCK)
+                        buf = bytearray(1)
+                        fcntl.ioctl(fd, 0x80016a11, buf)
+                        num_axes = buf[0]
+                        fcntl.ioctl(fd, 0x80016a12, buf)
+                        num_buttons = buf[0]
+                        os.close(fd)
+                    except Exception:
+                        pass
+
+                    joysticks.append({
+                        "name": name,
+                        "path": dev_path,
+                        "id": item,
+                        "num_axes": num_axes,
+                        "num_buttons": num_buttons
+                    })
+        except Exception:
+            pass
+
+    return {
+        "mice": data.get("mice", []),
+        "keyboards": data.get("keyboards", []),
+        "tablets": data.get("tablets", []),
+        "switches": data.get("switches", []),
+        "joysticks": joysticks
+    }
+
+# ==============================================================================
+# Compact Custom Cairo Radar Scope Widget (Zero Font Shadows)
+# ==============================================================================
+class JoystickScope(Gtk.DrawingArea):
+    def __init__(self, theme_pal, title="STICK 1 (X/Y)"):
+        super().__init__()
+        self.pal = theme_pal
+        self.title = title
+        self.set_size_request(95, 95)
+        self.axis_x = 0.0
+        self.axis_y = 0.0
+        self.connect("draw", self.on_draw)
+
+    def set_deflection(self, x, y):
+        self.axis_x = max(-1.0, min(1.0, x))
+        self.axis_y = max(-1.0, min(1.0, y))
+        self.queue_draw()
+
+    def on_draw(self, widget, cr):
+        w = widget.get_allocated_width()
+        h = widget.get_allocated_height()
+        cx, cy = w / 2.0, h / 2.0
+        radius = min(cx, cy) - 5
+
+        cr.arc(cx, cy, radius, 0, 2 * math.pi)
+        cr.set_source_rgba(0.04, 0.08, 0.1, 0.95)
+        cr.fill_preserve()
+        cr.set_source_rgba(0.2, 0.4, 0.35, 0.7)
+        cr.set_line_width(1.2)
+        cr.stroke()
+
+        for r_factor in [0.33, 0.66]:
+            cr.arc(cx, cy, radius * r_factor, 0, 2 * math.pi)
+            cr.set_source_rgba(0.2, 0.5, 0.4, 0.25)
+            cr.set_line_width(0.8)
+            cr.stroke()
+
+        cr.move_to(cx - radius, cy)
+        cr.line_to(cx + radius, cy)
+        cr.move_to(cx, cy - radius)
+        cr.line_to(cx, cy + radius)
+        cr.set_source_rgba(0.2, 0.6, 0.5, 0.4)
+        cr.set_line_width(0.8)
+        cr.stroke()
+
+        target_x = cx + (self.axis_x * (radius - 4))
+        target_y = cy + (self.axis_y * (radius - 4))
+
+        cr.move_to(cx, cy)
+        cr.line_to(target_x, target_y)
+        cr.set_source_rgba(0.28, 0.9, 0.76, 0.6)
+        cr.set_line_width(1.2)
+        cr.stroke()
+
+        cr.arc(target_x, target_y, 3.5, 0, 2 * math.pi)
+        cr.set_source_rgba(0.28, 0.9, 0.76, 0.95)
+        cr.fill_preserve()
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.9)
+        cr.set_line_width(1.2)
+        cr.stroke()
+
+# ==============================================================================
+# Compact Cairo Linear Bargraph (Throttle / Rudder)
+# ==============================================================================
+class LinearAxisBar(Gtk.DrawingArea):
+    def __init__(self, theme_pal, title="THR", is_vertical=True, is_bipolar=False):
+        super().__init__()
+        self.pal = theme_pal
+        self.title = title
+        self.is_vertical = is_vertical
+        self.is_bipolar = is_bipolar
+        self.value = 0.0
+        if is_vertical:
+            self.set_size_request(24, 75)
+        else:
+            self.set_size_request(80, 14)
+        self.connect("draw", self.on_draw)
+
+    def set_value(self, val):
+        self.value = max(-1.0, min(1.0, val))
+        self.queue_draw()
+
+    def on_draw(self, widget, cr):
+        w = widget.get_allocated_width()
+        h = widget.get_allocated_height()
+
+        cr.set_source_rgba(0.04, 0.07, 0.1, 0.95)
+        cr.rectangle(1, 1, w - 2, h - 2)
+        cr.fill_preserve()
+        cr.set_source_rgba(0.2, 0.3, 0.35, 0.6)
+        cr.set_line_width(1.0)
+        cr.stroke()
+
+        if self.is_vertical:
+            val_norm = (self.value + 1.0) / 2.0 if self.is_bipolar else max(0.0, min(1.0, (self.value + 1.0) / 2.0))
+            fill_h = (h - 6) * val_norm
+            bar_y = (h - 3) - fill_h
+
+            cr.set_source_rgba(1.0, 0.7, 0.0, 0.85)
+            cr.rectangle(3, bar_y, w - 6, fill_h)
+            cr.fill()
+
+            if self.is_bipolar:
+                mid_y = h / 2.0
+                cr.move_to(2, mid_y)
+                cr.line_to(w - 2, mid_y)
+                cr.set_source_rgba(0.3, 0.8, 0.7, 0.7)
+                cr.set_line_width(1.2)
+                cr.stroke()
+        else:
+            mid_x = w / 2.0
+            val_norm = self.value
+            fill_w = (w / 2.0 - 4) * val_norm
+
+            cr.set_source_rgba(0.28, 0.9, 0.76, 0.85)
+            if fill_w >= 0:
+                cr.rectangle(mid_x, 2, fill_w, h - 4)
+            else:
+                cr.rectangle(mid_x + fill_w, 2, -fill_w, h - 4)
+            cr.fill()
+
+            cr.move_to(mid_x, 1)
+            cr.line_to(mid_x, h - 1)
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.8)
+            cr.set_line_width(1.2)
+            cr.stroke()
+
+# ==============================================================================
+# Main Space Deck Window
+# ==============================================================================
+class SpaceDeckWindow(Gtk.Window):
+    def __init__(self, start_tab=0):
+        super().__init__(title="Space Deck")
+        self.set_name("space-deck")
+        self.set_role("space-deck")
+        self.set_default_size(720, 480)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+
+        self.theme_key = get_active_theme_key()
+        self.pal = THEMES.get(self.theme_key, THEMES["nasa"])
+        self.state = load_state()
+        self.hardware = get_connected_hardware()
+
+        self.stop_event = threading.Event()
+        self.worker_thread = None
+        self.debounce_timers = {}
+        self.active_js_path = None
+        self.button_led_labels = []
+        self.tab_buttons = {}
+        self.active_tab_name = "pointers"
+
+        self.axes_values = [0.0] * 16
+        self.button_states = [0] * 32
+
+        self.apply_styles()
+        self.build_ui(start_tab)
+
+        self.connect("destroy", self.on_destroy)
+        self.connect("key-press-event", self.on_key_press)
+
+        self.worker_thread = threading.Thread(target=self.hotplug_worker, daemon=True)
+        self.worker_thread.start()
+
+        self.start_joystick_reader()
+
+    def apply_styles(self):
+        p = self.pal
+        css = f"""
+        * {{
+            font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+            text-shadow: none;
+            box-shadow: none;
+            -gtk-icon-shadow: none;
+        }}
+        window#space-deck {{
+            background-color: {p['bg']};
+            border: 2px solid {p['border']};
+            border-radius: {p['radius']};
+        }}
+        .header-box {{
+            background-color: {p['bg_card']};
+            border-bottom: 2px solid {p['border']};
+            padding: 6px 12px;
+        }}
+        .action-toolbar {{
+            background-color: {p['bg']};
+            border-bottom: 1px solid {p['btn_border']};
+            padding: 5px 12px;
+        }}
+        .sub-header-bar {{
+            padding: 3px 12px 1px 12px;
+        }}
+        .telemetry-card {{
+            background-color: {p['bg_panel']};
+            border: 1px solid {p['border_dim']};
+            border-radius: {p['radius']};
+            padding: 5px 8px;
+            margin-bottom: 3px;
+        }}
+        .telemetry-card:hover {{
+            border-color: {p['accent']};
+        }}
+        .stat-badge {{
+            background-color: {p['bg_bezel']};
+            border: 1px solid {p['border_dim']};
+            border-radius: {p['radius']};
+            padding: 2px 6px;
+        }}
+        .badge-online {{
+            background-color: {p['bg_bezel']};
+            border: 1px solid {p['green']};
+            color: {p['green']};
+            font-size: 8.5px;
+            font-weight: 900;
+            padding: 2px 5px;
+            border-radius: 2px;
+        }}
+        .badge-isolated {{
+            background-color: {p['bg_bezel']};
+            border: 1px solid {p['red']};
+            color: {p['red']};
+            font-size: 8.5px;
+            font-weight: 900;
+            padding: 2px 5px;
+            border-radius: 2px;
+        }}
+        .led-off {{
+            background-color: {p['bg_bezel']};
+            border: 1px solid {p['border_dim']};
+            color: {p['text_dim']};
+            font-size: 8px;
+            font-weight: bold;
+            padding: 1px 4px;
+            border-radius: 2px;
+        }}
+        .led-on {{
+            background-color: {p['accent']};
+            border: 1px solid {p['text_main']};
+            color: #000000;
+            font-size: 8px;
+            font-weight: 900;
+            padding: 1px 4px;
+            border-radius: 2px;
+        }}
+        button,
+        button.action-btn {{
+            background-image: none;
+            background-color: {p['btn_bg']};
+            border: 1px solid {p['btn_border']};
+            border-radius: {p['radius']};
+            padding: 4px 8px;
+            color: {p['text_main']};
+            font-size: 9.5px;
+            font-weight: bold;
+        }}
+        button:hover,
+        button.action-btn:hover {{
+            background-color: {p['btn_hover']};
+            border: 1px solid {p['accent']};
+        }}
+        button.action-btn.active {{
+            background-color: {p['btn_hover']};
+            border: 1px solid {p['accent']};
+        }}
+        button.btn-primary {{
+            border-color: {p['accent']};
+            color: {p['accent']};
+        }}
+        button.btn-danger,
+        button.danger-btn {{
+            background-color: {p['btn_bg']};
+            border: 1px solid {p['red']};
+            color: {p['red']};
+        }}
+        button.btn-danger:hover,
+        button.danger-btn:hover {{
+            background-color: #381114;
+            border-color: {p['red']};
+        }}
+        scale highlight {{
+            background-color: {p['accent']};
+            border-radius: 2px;
+        }}
+        scale trough {{
+            background-color: {p['bg_bezel']};
+            border: 1px solid {p['border_dim']};
+            min-height: 4px;
+            border-radius: 2px;
+        }}
+        scale slider {{
+            background-color: {p['accent']};
+            border: 1px solid {p['border']};
+            min-width: 10px;
+            min-height: 10px;
+            border-radius: 2px;
+        }}
+        switch {{
+            background-color: {p['bg_bezel']};
+            border: 1px solid {p['border_dim']};
+            border-radius: 3px;
+        }}
+        switch:checked {{
+            background-color: {p['green']};
+            border-color: {p['green']};
+        }}
+        scrollbar slider {{
+            background-color: {p['accent']};
+            border-radius: 2px;
+            min-width: 4px;
+        }}
+        scrollbar trough {{
+            background-color: {p['track_bg']};
+            border: 1px solid {p['border_dim']};
+        }}
+        combobox,
+        combobox button,
+        combobox button.combo,
+        combobox > box,
+        combobox cellview {{
+            background-image: none;
+            background-color: {p['bg_card']};
+            border: 1px solid {p['border_dim']};
+            color: {p['text_main']};
+            border-radius: {p['radius']};
+        }}
+        combobox button:hover,
+        combobox button.combo:hover {{
+            background-color: {p['btn_hover']};
+            border-color: {p['accent']};
+        }}
+        combobox cellview {{
+            color: {p['text_main']};
+            background-color: transparent;
+            padding: 1px 4px;
+        }}
+        combobox cellview label {{
+            color: {p['text_main']};
+            font-size: 9.5px;
+        }}
+        combobox arrow {{
+            color: {p['accent']};
+            -gtk-icon-source: -gtk-icontheme('pan-down-symbolic');
+            min-height: 9px;
+            min-width: 9px;
+        }}
+        menu,
+        .popup-menu,
+        popover,
+        popover.background,
+        window.popup {{
+            background-image: none;
+            background-color: {p['bg_panel']};
+            border: 1px solid {p['border']};
+            border-radius: {p['radius']};
+            padding: 3px;
+        }}
+        menu menuitem,
+        popover modelbutton {{
+            background-image: none;
+            background-color: {p['bg_card']};
+            color: {p['text_sub']};
+            padding: 4px 8px;
+            margin: 1px;
+            font-size: 9.5px;
+            border-radius: {p['radius']};
+            border: 1px solid {p['border_dim']};
+        }}
+        menu menuitem:hover,
+        popover modelbutton:hover {{
+            background-color: {p['btn_hover']};
+            color: {p['accent']};
+            border-color: {p['accent']};
+        }}
+        menu menuitem label,
+        popover modelbutton label {{
+            color: inherit;
+            background-color: transparent;
+            font-size: 9.5px;
+        }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+    def build_ui(self, start_tab=0):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(main_box)
+
+        # 1. Header Box
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        header.get_style_context().add_class("header-box")
+        main_box.pack_start(header, False, False, 0)
+
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 11.5' foreground='{self.pal['text_main']}'>🎮 APOLLO FLIGHT DECK // HUMAN INTERFACE &amp; ATTITUDE HUB</span>")
+        title_lbl.set_xalign(0.0)
+
+        sub_lbl = Gtk.Label()
+        sub_lbl.set_markup(f"<span font_desc='JetBrainsMono Nerd Font 8.5' foreground='{self.pal['text_dim']}'>PERIPHERAL TELEMETRY, HYPRLAND DRIVER IPC &amp; AVIONICS CONTROLLER</span>")
+        sub_lbl.set_xalign(0.0)
+
+        title_box.pack_start(title_lbl, False, False, 0)
+        title_box.pack_start(sub_lbl, False, False, 0)
+        header.pack_start(title_box, True, True, 0)
+
+        self.lbl_profile = Gtk.Label()
+        self.lbl_profile.get_style_context().add_class("stat-badge")
+        self.lbl_profile.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9' foreground='{self.pal['green']}'>[PROFILE: {self.state.get('active_profile', 'CODING')}]</span>")
+        header.pack_end(self.lbl_profile, False, False, 0)
+
+        # 2. Comms Telemetry Style Button Toolbar
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toolbar.get_style_context().add_class("action-toolbar")
+        main_box.pack_start(toolbar, False, False, 0)
+
+        tab_defs = [
+            ("pointers", "POINTERS &amp; TRACKPADS"),
+            ("keyboards", "KEYBOARDS"),
+            ("sticks", "STICKS &amp; GAMEPADS"),
+            ("profiles", "FLIGHT PROFILES")
+        ]
+
+        self.tab_buttons = {}
+        for tab_id, tab_label in tab_defs:
+            btn = Gtk.Button()
+            btn.get_style_context().add_class("action-btn")
+            lbl_btn = Gtk.Label()
+            lbl_btn.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['text_dim']}'>[ {tab_label} ]</span>")
+            btn.add(lbl_btn)
+            btn.connect("clicked", lambda b, tid=tab_id: self.switch_tab(tid))
+            toolbar.pack_start(btn, False, False, 0)
+            self.tab_buttons[tab_id] = (btn, lbl_btn, tab_label)
+
+        # Sub-header Bar (Matching Comms Telemetry format)
+        sub_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        sub_bar.get_style_context().add_class("sub-header-bar")
+        main_box.pack_start(sub_bar, False, False, 0)
+
+        self.lbl_section_title = Gtk.Label()
+        self.lbl_section_title.set_xalign(0.0)
+        sub_bar.pack_start(self.lbl_section_title, True, True, 0)
+
+        self.lbl_section_status = Gtk.Label()
+        self.lbl_section_status.set_xalign(1.0)
+        sub_bar.pack_end(self.lbl_section_status, False, False, 0)
+
+        # 3. Stack Content Area (Zero-Scroll Container)
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(100)
+        main_box.pack_start(self.stack, True, True, 0)
+
+        self.stack.add_named(self.create_pointers_tab(), "pointers")
+        self.stack.add_named(self.create_keyboards_tab(), "keyboards")
+        self.stack.add_named(self.create_sticks_tab(), "sticks")
+        self.stack.add_named(self.create_profiles_tab(), "profiles")
+
+        initial_name = "pointers"
+        if start_tab == 1: initial_name = "keyboards"
+        elif start_tab == 2: initial_name = "sticks"
+        elif start_tab == 3: initial_name = "profiles"
+        self.switch_tab(initial_name)
+
+        # 4. Streamlined Footer
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        footer.get_style_context().add_class("header-box")
+        main_box.pack_end(footer, False, False, 0)
+
+        btn_restore = Gtk.Button(label="[ 🔄 RESTORE ALL DEFAULT (R) ]")
+        btn_restore.get_style_context().add_class("danger-btn")
+        btn_restore.connect("clicked", self.on_restore_defaults)
+        footer.pack_start(btn_restore, False, False, 0)
+
+        lbl_hint = Gtk.Label()
+        lbl_hint.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>[1-4] Tabs • [R] Reset • [ESC] Close</span>")
+        footer.pack_start(lbl_hint, True, True, 0)
+
+        btn_close = Gtk.Button(label="[ ✕ DISMISS (ESC) ]")
+        btn_close.get_style_context().add_class("action-btn")
+        btn_close.connect("clicked", lambda b: self.destroy())
+        footer.pack_end(btn_close, False, False, 0)
+
+    def switch_tab(self, tab_id):
+        self.active_tab_name = tab_id
+        self.stack.set_visible_child_name(tab_id)
+
+        for tid, (btn, lbl_btn, label_text) in self.tab_buttons.items():
+            if tid == tab_id:
+                btn.get_style_context().add_class("active")
+                lbl_btn.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['accent']}'>[ {label_text} ]</span>")
+            else:
+                btn.get_style_context().remove_class("active")
+                lbl_btn.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['text_dim']}'>[ {label_text} ]</span>")
+
+        mice_count = len(self.hardware.get("mice", []))
+        kb_count = len(self.hardware.get("keyboards", []))
+        js_count = len(self.hardware.get("joysticks", []))
+
+        if tab_id == "pointers":
+            self.lbl_section_title.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9' foreground='{self.pal['text_main']}'>POINTING INTERFACES &amp; TRACKPADS:</span>")
+            self.lbl_section_status.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['green']}'>[ {mice_count} POINTERS DISCOVERED ]</span>")
+        elif tab_id == "keyboards":
+            self.lbl_section_title.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9' foreground='{self.pal['text_main']}'>KEYBOARD MATRICES &amp; INPUT BUSSES:</span>")
+            self.lbl_section_status.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['green']}'>[ {kb_count} UNITS DETECTED ]</span>")
+        elif tab_id == "sticks":
+            self.lbl_section_title.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9' foreground='{self.pal['text_main']}'>FLIGHT STICKS, HOTAS &amp; RADAR AVIONICS:</span>")
+            self.lbl_section_status.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['green']}'>[ {js_count} UNITS ACTIVE ]</span>")
+        elif tab_id == "profiles":
+            self.lbl_section_title.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9' foreground='{self.pal['text_main']}'>COORDINATED FLIGHT PROFILES:</span>")
+            self.lbl_section_status.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 8.5' foreground='{self.pal['accent']}'>[ 3 PRESETS READY ]</span>")
+
+    # --------------------------------------------------------------------------
+    # Sub-Areas (Zero-Scroll Telemetry Cards)
+    # --------------------------------------------------------------------------
+    def create_pointers_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        vbox.set_margin_top(2)
+        vbox.set_margin_bottom(2)
+        vbox.set_margin_start(12)
+        vbox.set_margin_end(12)
+
+        dock_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        dock_card.get_style_context().add_class("telemetry-card")
+        lbl_dock = Gtk.Label()
+        lbl_dock.set_markup(f"<span font_size='8000' foreground='{self.pal['text_sub']}'>⚡ <b>Touchpad Dock Assist:</b> Auto-isolate trackpad when external mouse attached</span>")
+        lbl_dock.set_xalign(0.0)
+        dock_card.pack_start(lbl_dock, True, True, 0)
+        
+        sw_dock = Gtk.Switch()
+        sw_dock.set_active(self.state.get("auto_disable_touchpad", False))
+        sw_dock.connect("state-set", self.on_toggle_dock_assist)
+        dock_card.pack_end(sw_dock, False, False, 0)
+        vbox.pack_start(dock_card, False, False, 0)
+
+        mice = self.hardware.get("mice", [])
+        if not mice:
+            lbl_none = Gtk.Label()
+            lbl_none.set_markup(f"<span foreground='{self.pal['text_dim']}'>No pointing devices detected via Hyprland IPC.</span>")
+            vbox.pack_start(lbl_none, True, True, 0)
+        else:
+            for dev in mice:
+                name = dev.get("name", "Unknown Pointer")
+                is_disabled = name in self.state.get("disabled_devices", [])
+
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                card.get_style_context().add_class("telemetry-card")
+
+                row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                lbl_name = Gtk.Label()
+                lbl_name.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>🖱️ {name.upper()}</span>")
+                lbl_name.set_xalign(0.0)
+                row1.pack_start(lbl_name, True, True, 0)
+
+                lbl_status = Gtk.Label(label="[ ISOLATED ]" if is_disabled else "[ ONLINE ]")
+                lbl_status.get_style_context().add_class("badge-isolated" if is_disabled else "badge-online")
+                row1.pack_end(lbl_status, False, False, 0)
+
+                btn_toggle = Gtk.Button(label="[ RE-ENABLE ]" if is_disabled else "[ ISOLATE / MUTE ]")
+                btn_toggle.get_style_context().add_class("btn-primary" if is_disabled else "danger-btn")
+                btn_toggle.connect("clicked", self.on_toggle_device_mute, name, lbl_status, btn_toggle)
+                row1.pack_end(btn_toggle, False, False, 0)
+                card.pack_start(row1, False, False, 0)
+
+                row_ctrl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                lbl_sens = Gtk.Label()
+                lbl_sens.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Sens:</span>")
+                row_ctrl.pack_start(lbl_sens, False, False, 0)
+
+                cur_sens = self.state.get("sensitivities", {}).get(name, dev.get("defaultSpeed", 0.0))
+                scale_sens = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, -1.0, 1.0, 0.05)
+                scale_sens.set_value(cur_sens)
+                scale_sens.connect("value-changed", self.on_sens_changed, name)
+                row_ctrl.pack_start(scale_sens, True, True, 0)
+
+                sw_nat = Gtk.CheckButton(label="Natural")
+                sw_nat.set_active(self.state.get("natural_scroll", {}).get(name, False))
+                sw_nat.connect("toggled", self.on_toggle_natural_scroll, name)
+                row_ctrl.pack_start(sw_nat, False, False, 0)
+
+                cb_acc = Gtk.ComboBoxText()
+                cb_acc.append("adaptive", "Adaptive")
+                cb_acc.append("flat", "Flat (1:1)")
+                cb_acc.set_active(1 if self.state.get("accel_profiles", {}).get(name) == "flat" else 0)
+                cb_acc.connect("changed", self.on_accel_changed, name)
+                row_ctrl.pack_start(cb_acc, False, False, 0)
+
+                card.pack_start(row_ctrl, False, False, 0)
+                vbox.pack_start(card, False, False, 0)
+
+        return vbox
+
+    def create_keyboards_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        vbox.set_margin_top(2)
+        vbox.set_margin_bottom(2)
+        vbox.set_margin_start(12)
+        vbox.set_margin_end(12)
+
+        keyboards = self.hardware.get("keyboards", [])
+        if not keyboards:
+            lbl_none = Gtk.Label()
+            lbl_none.set_markup(f"<span foreground='{self.pal['text_dim']}'>No keyboards detected via Hyprland IPC.</span>")
+            vbox.pack_start(lbl_none, True, True, 0)
+        else:
+            for dev in keyboards:
+                name = dev.get("name", "Unknown Keyboard")
+                is_disabled = name in self.state.get("disabled_devices", [])
+                layout = dev.get("layout", "us")
+                active_km = dev.get("active_keymap", "")
+
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                card.get_style_context().add_class("telemetry-card")
+
+                row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                lbl_name = Gtk.Label()
+                lbl_name.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>⌨️ {name.upper()}</span>")
+                lbl_name.set_xalign(0.0)
+                row1.pack_start(lbl_name, True, True, 0)
+
+                lbl_status = Gtk.Label(label="[ ISOLATED ]" if is_disabled else "[ ONLINE ]")
+                lbl_status.get_style_context().add_class("badge-isolated" if is_disabled else "badge-online")
+                row1.pack_end(lbl_status, False, False, 0)
+
+                btn_toggle = Gtk.Button(label="[ RE-ENABLE ]" if is_disabled else "[ ISOLATE / MUTE ]")
+                btn_toggle.get_style_context().add_class("btn-primary" if is_disabled else "danger-btn")
+                btn_toggle.connect("clicked", self.on_toggle_device_mute, name, lbl_status, btn_toggle)
+                row1.pack_end(btn_toggle, False, False, 0)
+                card.pack_start(row1, False, False, 0)
+
+                row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                lbl_km = Gtk.Label()
+                lbl_km.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>Map: {active_km or layout}</span>")
+                lbl_km.set_xalign(0.0)
+                row2.pack_start(lbl_km, True, True, 0)
+
+                btn_br = Gtk.Button(label="[ BR ]")
+                btn_br.get_style_context().add_class("action-btn")
+                btn_br.connect("clicked", self.on_switch_layout, name, "br")
+                row2.pack_end(btn_br, False, False, 0)
+
+                btn_us = Gtk.Button(label="[ US ]")
+                btn_us.get_style_context().add_class("action-btn")
+                btn_us.connect("clicked", self.on_switch_layout, name, "us")
+                row2.pack_end(btn_us, False, False, 0)
+
+                btn_intl = Gtk.Button(label="[ US-INTL ]")
+                btn_intl.get_style_context().add_class("action-btn")
+                btn_intl.connect("clicked", self.on_switch_layout, name, "us,intl")
+                row2.pack_end(btn_intl, False, False, 0)
+                card.pack_start(row2, False, False, 0)
+
+                vbox.pack_start(card, False, False, 0)
+
+        return vbox
+
+    def create_sticks_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        vbox.set_margin_top(2)
+        vbox.set_margin_bottom(2)
+        vbox.set_margin_start(12)
+        vbox.set_margin_end(12)
+
+        joysticks = self.hardware.get("joysticks", [])
+        
+        ctrl_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ctrl_card.get_style_context().add_class("telemetry-card")
+        
+        lbl_sel = Gtk.Label()
+        lbl_sel.set_markup(f"<span font_weight='bold' font_size='8500' foreground='{self.pal['text_main']}'>🎮 Unit:</span>")
+        ctrl_card.pack_start(lbl_sel, False, False, 0)
+
+        self.cb_controllers = Gtk.ComboBoxText()
+        if not joysticks:
+            self.cb_controllers.append("sim", "Virtual / Simulator Telemetry (No physical stick)")
+            self.cb_controllers.set_active(0)
+        else:
+            for i, js in enumerate(joysticks):
+                self.cb_controllers.append(js["path"], f"{js['name']} [{js['num_axes']}A, {js['num_buttons']}B]")
+            self.cb_controllers.set_active(0)
+
+        self.cb_controllers.connect("changed", self.on_controller_selected)
+        ctrl_card.pack_start(self.cb_controllers, True, True, 0)
+
+        lbl_dz = Gtk.Label()
+        lbl_dz.set_markup(f"<span font_size='8000' foreground='{self.pal['text_dim']}'>DZ:</span>")
+        ctrl_card.pack_start(lbl_dz, False, False, 0)
+
+        scale_dz = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 30, 1)
+        scale_dz.set_draw_value(False)
+        scale_dz.set_value(8)
+        scale_dz.set_size_request(55, -1)
+        self.lbl_dz_val = Gtk.Label()
+        self.lbl_dz_val.set_markup(f"<span font_size='8000' foreground='{self.pal['text_sub']}'>8%</span>")
+        scale_dz.connect("value-changed", self.on_deadzone_changed)
+        ctrl_card.pack_start(scale_dz, False, False, 0)
+        ctrl_card.pack_start(self.lbl_dz_val, False, False, 0)
+
+        self.lbl_active_badge = Gtk.Label(label="[ SIM ]" if not joysticks else "[ ONLINE ]")
+        self.lbl_active_badge.get_style_context().add_class("badge-online")
+        ctrl_card.pack_end(self.lbl_active_badge, False, False, 0)
+        vbox.pack_start(ctrl_card, False, False, 0)
+
+        hud_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        vbox.pack_start(hud_card, False, False, 0)
+
+        # Scope 1
+        scope1_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        scope1_box.get_style_context().add_class("telemetry-card")
+        
+        lbl_sc1 = Gtk.Label()
+        lbl_sc1.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>STICK 1: PITCH/ROLL</span>")
+        scope1_box.pack_start(lbl_sc1, False, False, 0)
+
+        self.scope1 = JoystickScope(self.pal, "STICK 1")
+        scope1_box.pack_start(self.scope1, False, False, 0)
+
+        self.lbl_tel1 = Gtk.Label()
+        self.lbl_tel1.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>X: +0.00 Y: +0.00</span>")
+        scope1_box.pack_start(self.lbl_tel1, False, False, 0)
+        hud_card.pack_start(scope1_box, True, True, 0)
+
+        # Scope 2
+        scope2_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        scope2_box.get_style_context().add_class("telemetry-card")
+        
+        lbl_sc2 = Gtk.Label()
+        lbl_sc2.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>STICK 2: SLEW/LOOK</span>")
+        scope2_box.pack_start(lbl_sc2, False, False, 0)
+
+        self.scope2 = JoystickScope(self.pal, "STICK 2")
+        scope2_box.pack_start(self.scope2, False, False, 0)
+
+        self.lbl_tel2 = Gtk.Label()
+        self.lbl_tel2.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>RX: +0.00 RY: +0.00</span>")
+        scope2_box.pack_start(self.lbl_tel2, False, False, 0)
+        hud_card.pack_start(scope2_box, True, True, 0)
+
+        # Aux Throttle & Rudder
+        aux_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        aux_box.get_style_context().add_class("telemetry-card")
+
+        lbl_aux_title = Gtk.Label()
+        lbl_aux_title.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>THR &amp; RUD</span>")
+        aux_box.pack_start(lbl_aux_title, False, False, 0)
+
+        aux_inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        aux_box.pack_start(aux_inner, False, False, 0)
+
+        v_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        lbl_th = Gtk.Label()
+        lbl_th.set_markup(f"<span font_size='7000' foreground='{self.pal['text_dim']}'>THR</span>")
+        v_box.pack_start(lbl_th, False, False, 0)
+        self.bar_throttle = LinearAxisBar(self.pal, "THROTTLE", is_vertical=True, is_bipolar=False)
+        v_box.pack_start(self.bar_throttle, False, False, 0)
+        aux_inner.pack_start(v_box, False, False, 0)
+
+        v_box2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        lbl_rz = Gtk.Label()
+        lbl_rz.set_markup(f"<span font_size='7000' foreground='{self.pal['text_dim']}'>TWIST</span>")
+        v_box2.pack_start(lbl_rz, False, False, 0)
+        self.bar_twist = LinearAxisBar(self.pal, "TWIST", is_vertical=True, is_bipolar=True)
+        v_box2.pack_start(self.bar_twist, False, False, 0)
+        aux_inner.pack_start(v_box2, False, False, 0)
+
+        self.lbl_rudder = Gtk.Label()
+        self.lbl_rudder.set_markup(f"<span font_size='7000' foreground='{self.pal['text_sub']}'>RUD: +0.00</span>")
+        aux_box.pack_start(self.lbl_rudder, False, False, 0)
+        self.bar_rudder = LinearAxisBar(self.pal, "RUDDER", is_vertical=False, is_bipolar=True)
+        aux_box.pack_start(self.bar_rudder, False, False, 0)
+
+        hud_card.pack_start(aux_box, False, False, 0)
+
+        # Button Annunciator Matrix (Fully visible without scrolling)
+        btn_matrix_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        btn_matrix_card.get_style_context().add_class("telemetry-card")
+
+        lbl_btn_title = Gtk.Label()
+        lbl_btn_title.set_markup(f"<span font_weight='bold' font_size='8000' foreground='{self.pal['text_dim']}'>ACTIVE BUTTON ANNUNCIATORS</span>")
+        lbl_btn_title.set_xalign(0.0)
+        btn_matrix_card.pack_start(lbl_btn_title, False, False, 0)
+
+        grid_btns = Gtk.Grid()
+        grid_btns.set_column_spacing(4)
+        grid_btns.set_row_spacing(2)
+        btn_matrix_card.pack_start(grid_btns, False, False, 0)
+
+        self.button_led_labels = []
+        for i in range(16):
+            btn_lbl = Gtk.Label(label=f"B{i+1:02d}")
+            btn_lbl.get_style_context().add_class("led-off")
+            self.button_led_labels.append(btn_lbl)
+            grid_btns.attach(btn_lbl, i % 8, i // 8, 1, 1)
+
+        vbox.pack_start(btn_matrix_card, False, False, 0)
+        return vbox
+
+    def create_profiles_tab(self):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        vbox.set_margin_top(2)
+        vbox.set_margin_bottom(2)
+        vbox.set_margin_start(12)
+        vbox.set_margin_end(12)
+
+        profiles = [
+            ("CODING", "🚀 COMMAND DECK / WORKSTATION", "All pointers and touchpads enabled • Natural scrolling ON • Multi-layout active."),
+            ("GAMING", "🎯 COMBAT / FPS GAMING", "Flat raw 1:1 acceleration profile • Laptop touchpad ISOLATED • 0 sensitivity bias."),
+            ("SIM", "✈️ ORBITAL SIM / FLIGHT HOTAS", "Flight sticks &amp; rudders unmasked • Smoothed mouse curves • Clickpad isolated.")
+        ]
+
+        for p_id, p_title, p_desc in profiles:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            card.get_style_context().add_class("telemetry-card")
+
+            row_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            lbl_t = Gtk.Label()
+            lbl_t.set_markup(f"<span font_weight='bold' font_size='9000' foreground='{self.pal['text_main']}'>{p_title}</span>")
+            lbl_t.set_xalign(0.0)
+            row_top.pack_start(lbl_t, True, True, 0)
+
+            btn_apply = Gtk.Button(label=f"[ ENGAGE {p_id} ]")
+            btn_apply.get_style_context().add_class("action-btn")
+            btn_apply.connect("clicked", self.on_apply_profile, p_id)
+            row_top.pack_end(btn_apply, False, False, 0)
+            card.pack_start(row_top, False, False, 0)
+
+            lbl_d = Gtk.Label()
+            lbl_d.set_markup(f"<span font_size='7500' foreground='{self.pal['text_dim']}'>{p_desc}</span>")
+            lbl_d.set_xalign(0.0)
+            card.pack_start(lbl_d, False, False, 0)
+            vbox.pack_start(card, False, False, 0)
+
+        return vbox
+
+    # --------------------------------------------------------------------------
+    # Event Handlers & IPC
+    # --------------------------------------------------------------------------
+    def on_controller_selected(self, combo):
+        active_id = combo.get_active_id()
+        self.state["selected_joystick"] = active_id
+        save_state(self.state)
+        self.start_joystick_reader()
+
+    def on_deadzone_changed(self, scale):
+        val = scale.get_value()
+        self.deadzone = val / 100.0
+        if hasattr(self, 'lbl_dz_val'):
+            self.lbl_dz_val.set_markup(f"<span font_size='8000' foreground='{self.pal['text_sub']}'>{int(val)}%</span>")
+
+    def start_joystick_reader(self):
+        joysticks = self.hardware.get("joysticks", [])
+        if not joysticks:
+            self.active_js_path = None
+            return
+
+        sel = self.state.get("selected_joystick")
+        target_path = None
+        for js in joysticks:
+            if js["path"] == sel:
+                target_path = js["path"]
+                break
+        if not target_path and joysticks:
+            target_path = joysticks[0]["path"]
+
+        self.active_js_path = target_path
+
+    def on_toggle_device_mute(self, btn, name, lbl_status, btn_toggle):
+        disabled = self.state.setdefault("disabled_devices", [])
+        if name in disabled:
+            disabled.remove(name)
+            dispatch_hypr_keyword(f"device[{name}]:enabled", "true")
+            lbl_status.set_text("[ ONLINE ]")
+            lbl_status.get_style_context().remove_class("badge-isolated")
+            lbl_status.get_style_context().add_class("badge-online")
+            btn_toggle.set_label("[ ISOLATE / MUTE ]")
+            btn_toggle.get_style_context().remove_class("btn-primary")
+            btn_toggle.get_style_context().add_class("danger-btn")
+        else:
+            disabled.append(name)
+            dispatch_hypr_keyword(f"device[{name}]:enabled", "false")
+            lbl_status.set_text("[ ISOLATED ]")
+            lbl_status.get_style_context().remove_class("badge-online")
+            lbl_status.get_style_context().add_class("badge-isolated")
+            btn_toggle.set_label("[ RE-ENABLE ]")
+            btn_toggle.get_style_context().remove_class("danger-btn")
+            btn_toggle.get_style_context().add_class("btn-primary")
+        save_state(self.state)
+
+    def on_sens_changed(self, scale, name):
+        val = scale.get_value()
+        self.state.setdefault("sensitivities", {})[name] = val
+        save_state(self.state)
+        
+        if name in self.debounce_timers:
+            GLib.source_remove(self.debounce_timers[name])
+        self.debounce_timers[name] = GLib.timeout_add(40, lambda: dispatch_hypr_keyword(f"device[{name}]:sensitivity", f"{val:.2f}"))
+
+    def on_toggle_natural_scroll(self, btn, name):
+        val = btn.get_active()
+        self.state.setdefault("natural_scroll", {})[name] = val
+        save_state(self.state)
+        dispatch_hypr_keyword(f"device[{name}]:natural_scroll", "true" if val else "false")
+
+    def on_accel_changed(self, combo, name):
+        val = combo.get_active_id()
+        self.state.setdefault("accel_profiles", {})[name] = val
+        save_state(self.state)
+        dispatch_hypr_keyword(f"device[{name}]:accel_profile", val)
+
+    def on_switch_layout(self, btn, name, layout):
+        self.state.setdefault("layouts", {})[name] = layout
+        save_state(self.state)
+        dispatch_hypr_keyword(f"device[{name}]:kb_layout", layout)
+
+    def on_toggle_dock_assist(self, switch, state):
+        self.state["auto_disable_touchpad"] = state
+        save_state(self.state)
+        self.evaluate_dock_assist()
+
+    def evaluate_dock_assist(self):
+        if not self.state.get("auto_disable_touchpad", False):
+            return
+        mice = self.hardware.get("mice", [])
+        has_external_mouse = False
+        touchpad_name = None
+        for m in mice:
+            n = m.get("name", "").lower()
+            if "touchpad" in n or "synaptics" in n:
+                touchpad_name = m.get("name")
+            elif "trackpoint" not in n and "ibm" not in n:
+                has_external_mouse = True
+        
+        if touchpad_name:
+            if has_external_mouse:
+                dispatch_hypr_keyword(f"device[{touchpad_name}]:enabled", "false")
+            else:
+                dispatch_hypr_keyword(f"device[{touchpad_name}]:enabled", "true")
+
+    def on_apply_profile(self, btn, profile_id):
+        self.state["active_profile"] = profile_id
+        self.lbl_profile.set_markup(f"<span font_desc='JetBrainsMono Nerd Font Bold 9' foreground='{self.pal['green']}'>[PROFILE: {profile_id}]</span>")
+        
+        mice = self.hardware.get("mice", [])
+        if profile_id == "GAMING":
+            for m in mice:
+                name = m.get("name", "")
+                if "touchpad" in name.lower() or "synaptics" in name.lower():
+                    dispatch_hypr_keyword(f"device[{name}]:enabled", "false")
+                else:
+                    dispatch_hypr_keyword(f"device[{name}]:accel_profile", "flat")
+                    dispatch_hypr_keyword(f"device[{name}]:sensitivity", "0.0")
+        elif profile_id == "SIM":
+            for m in mice:
+                name = m.get("name", "")
+                dispatch_hypr_keyword(f"device[{name}]:accel_profile", "adaptive")
+                dispatch_hypr_keyword(f"device[{name}]:sensitivity", "-0.2")
+        else:
+            for m in mice:
+                name = m.get("name", "")
+                dispatch_hypr_keyword(f"device[{name}]:enabled", "true")
+                dispatch_hypr_keyword(f"device[{name}]:natural_scroll", "true")
+                dispatch_hypr_keyword(f"device[{name}]:accel_profile", "adaptive")
+        
+        save_state(self.state)
+
+    def on_restore_defaults(self, btn):
+        self.state["disabled_devices"] = []
+        self.state["sensitivities"] = {}
+        self.state["natural_scroll"] = {}
+        self.state["accel_profiles"] = {}
+        save_state(self.state)
+
+        for dev_type in ["mice", "keyboards"]:
+            for dev in self.hardware.get(dev_type, []):
+                name = dev.get("name")
+                if name:
+                    dispatch_hypr_keyword(f"device[{name}]:enabled", "true")
+                    dispatch_hypr_keyword(f"device[{name}]:sensitivity", "0.0")
+                    dispatch_hypr_keyword(f"device[{name}]:accel_profile", "adaptive")
+        
+        self.destroy()
+        subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+
+    def on_key_press(self, widget, event):
+        key = event.keyval
+        if key in (Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q):
+            self.destroy()
+            return True
+        elif key in (Gdk.KEY_1, Gdk.KEY_m, Gdk.KEY_M):
+            self.switch_tab("pointers")
+            return True
+        elif key in (Gdk.KEY_2, Gdk.KEY_k, Gdk.KEY_K):
+            self.switch_tab("keyboards")
+            return True
+        elif key in (Gdk.KEY_3, Gdk.KEY_j, Gdk.KEY_J):
+            self.switch_tab("sticks")
+            return True
+        elif key in (Gdk.KEY_4, Gdk.KEY_p, Gdk.KEY_P):
+            self.switch_tab("profiles")
+            return True
+        elif key in (Gdk.KEY_r, Gdk.KEY_R):
+            self.on_restore_defaults(None)
+            return True
+        return False
+
+    def hotplug_worker(self):
+        t = 0.0
+        js_fd = None
+        current_path = None
+        event_struct = struct.Struct('IhBB')
+
+        while not self.stop_event.is_set():
+            if self.active_js_path != current_path:
+                if js_fd is not None:
+                    try: os.close(js_fd)
+                    except Exception: pass
+                    js_fd = None
+                current_path = self.active_js_path
+                if current_path and os.path.exists(current_path):
+                    try:
+                        js_fd = os.open(current_path, os.O_RDONLY | os.O_NONBLOCK)
+                    except Exception:
+                        js_fd = None
+
+            if js_fd is not None:
+                try:
+                    while True:
+                        data = os.read(js_fd, 8)
+                        if not data or len(data) < 8:
+                            break
+                        js_time, value, ev_type, number = event_struct.unpack(data)
+                        
+                        if ev_type & 0x02:
+                            norm_val = value / 32767.0
+                            if number < len(self.axes_values):
+                                self.axes_values[number] = norm_val
+                        elif ev_type & 0x01:
+                            if number < len(self.button_states):
+                                self.button_states[number] = value
+                except BlockingIOError:
+                    pass
+                except Exception:
+                    try: os.close(js_fd)
+                    except Exception: pass
+                    js_fd = None
+
+                GLib.idle_add(self.update_hardware_telemetry, list(self.axes_values), list(self.button_states))
+                time.sleep(0.016)
+            else:
+                t += 0.05
+                sim_x1 = math.sin(t * 0.8) * 0.6
+                sim_y1 = math.cos(t * 0.5) * 0.4
+                sim_x2 = math.cos(t * 0.7) * 0.5
+                sim_y2 = math.sin(t * 0.9) * 0.5
+                sim_thr = (math.sin(t * 0.4) + 1.0) / 2.0
+                sim_rud = math.sin(t * 0.6) * 0.7
+
+                demo_btns = [0] * 16
+                active_btn_idx = int((t * 2) % 16)
+                demo_btns[active_btn_idx] = 1
+
+                GLib.idle_add(self.update_simulated_telemetry, sim_x1, sim_y1, sim_x2, sim_y2, sim_thr, sim_rud, demo_btns)
+                time.sleep(0.04)
+
+        if js_fd is not None:
+            try: os.close(js_fd)
+            except Exception: pass
+
+    def update_hardware_telemetry(self, axes, buttons):
+        x1 = axes[0] if len(axes) > 0 else 0.0
+        y1 = axes[1] if len(axes) > 1 else 0.0
+        self.scope1.set_deflection(x1, y1)
+        self.lbl_tel1.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>X: {x1:+.2f} Y: {y1:+.2f}</span>")
+
+        x2 = axes[3] if len(axes) > 3 else (axes[2] if len(axes) > 2 else 0.0)
+        y2 = axes[4] if len(axes) > 4 else (axes[3] if len(axes) > 3 else 0.0)
+        self.scope2.set_deflection(x2, y2)
+        self.lbl_tel2.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>RX: {x2:+.2f} RY: {y2:+.2f}</span>")
+
+        thr = axes[2] if len(axes) > 2 else 0.0
+        self.bar_throttle.set_value(thr)
+
+        twist = axes[5] if len(axes) > 5 else 0.0
+        self.bar_twist.set_value(twist)
+        self.bar_rudder.set_value(twist)
+        self.lbl_rudder.set_markup(f"<span font_size='7000' foreground='{self.pal['text_sub']}'>RUD: {twist:+.2f}</span>")
+
+        for i, lbl in enumerate(self.button_led_labels):
+            if i < len(buttons) and buttons[i]:
+                lbl.get_style_context().remove_class("led-off")
+                lbl.get_style_context().add_class("led-on")
+            else:
+                lbl.get_style_context().remove_class("led-on")
+                lbl.get_style_context().add_class("led-off")
+
+        return False
+
+    def update_simulated_telemetry(self, x1, y1, x2, y2, thr, rud, btns):
+        self.scope1.set_deflection(x1, y1)
+        self.lbl_tel1.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>X: {x1:+.2f} Y: {y1:+.2f}</span>")
+
+        self.scope2.set_deflection(x2, y2)
+        self.lbl_tel2.set_markup(f"<span font_size='7500' foreground='{self.pal['text_sub']}'>RX: {x2:+.2f} RY: {y2:+.2f}</span>")
+
+        self.bar_throttle.set_value((thr * 2.0) - 1.0)
+        self.bar_twist.set_value(rud)
+        self.bar_rudder.set_value(rud)
+        self.lbl_rudder.set_markup(f"<span font_size='7000' foreground='{self.pal['text_sub']}'>RUD: {rud:+.2f}</span>")
+
+        for i, lbl in enumerate(self.button_led_labels):
+            if i < len(btns) and btns[i]:
+                lbl.get_style_context().remove_class("led-off")
+                lbl.get_style_context().add_class("led-on")
+            else:
+                lbl.get_style_context().remove_class("led-on")
+                lbl.get_style_context().add_class("led-off")
+
+        return False
+
+    def on_destroy(self, *args):
+        self.stop_event.set()
+        for t in self.debounce_timers.values():
+            GLib.source_remove(t)
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=0.5)
+        if os.path.exists(PID_FILE):
+            try: os.remove(PID_FILE)
+            except Exception: pass
+        Gtk.main_quit()
+
+def main():
+    start_tab = 0
+    if len(sys.argv) > 1:
+        raw_arg = sys.argv[1].lower().replace("--tab=", "").replace("--tab", "").strip()
+        if not raw_arg and len(sys.argv) > 2:
+            raw_arg = sys.argv[2].lower().strip()
+        if raw_arg in ("1", "pointer", "pointers", "mouse", "mice"): start_tab = 0
+        elif raw_arg in ("2", "keyboard", "keyboards", "key"): start_tab = 1
+        elif raw_arg in ("3", "stick", "sticks", "joystick", "gamepad"): start_tab = 2
+        elif raw_arg in ("4", "profile", "profiles"): start_tab = 3
+
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, signal.SIGTERM)
+            time.sleep(0.1)
+        except Exception:
+            pass
+        try: os.remove(PID_FILE)
+        except Exception: pass
+
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+    win = SpaceDeckWindow(start_tab=start_tab)
+    win.show_all()
+    initial_name = "pointers"
+    if start_tab == 1: initial_name = "keyboards"
+    elif start_tab == 2: initial_name = "sticks"
+    elif start_tab == 3: initial_name = "profiles"
+    win.switch_tab(initial_name)
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

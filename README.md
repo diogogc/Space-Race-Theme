@@ -219,6 +219,7 @@ The repository includes a complete, modular documentation wiki covering design a
 | `SUPER + SHIFT + C` | `space-telemetry-dialog` | System Hardware Telemetry & Task Abort Console |
 | `SUPER + SHIFT + N` | `space-network-dialog` | Communications & Wi-Fi Radar Console |
 | `SUPER + SHIFT + E` | `space-energy-dialog` | MDC-02 Power Telemetry & Energy Profiles |
+| `SUPER + SHIFT + I` | `space-deck` | Space Deck: Universal Human Interface & Input Controller |
 | `SUPER + SHIFT + V` | `space-capcom-dialog` | CAPCOM Audio Intercom & Dual VU Meters |
 | `SUPER + SHIFT + K` | `space-keybinds` | Keybinding Flight Guide & Cheatsheet Modal |
 | `SUPER + SHIFT + O` | `space-screensaver` | 8-Bit Retro Multi-Scene Screensaver (Instant Play) |

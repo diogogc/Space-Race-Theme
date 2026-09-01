@@ -317,3 +317,49 @@ Wayland Alt-Tab window switcher modal with live workspace badges, icons, and tit
 
 - **Keybinding Directory (`space-keybinds`)**: Searchable flight control cheatsheet (`SUPER + SHIFT + K`).
 - **Emergency Flight Abort (`space-power-menu`)**: Clean session logout, reboot, shutdown, lock (`SUPER + SHIFT + M` / `ESC`).
+
+---
+
+## 🎮 11. Space Deck: Universal Human Interface & Input Controller (`space-deck`)
+
+**Hotkeys**: `SUPER + SHIFT + I` / `space-deck`
+
+The **Space Deck** is a centralized hardware telemetry HUD and control console for managing all connected Human Interface Devices (Mice, Keyboards, Touchpads, Joysticks, HOTAS, and Gamepads).
+
+### Pointers & Touchpad Controls (`[1] / [M]`)
+
+![Space Deck Pointers Tab](assets/space-deck-pointers-clean.png)
+
+- **Live Hardware Discovery**: Auto-detects all pointing hardware via Hyprland IPC (`hyprctl devices -j`).
+- **Dynamic Isolation / Mute**: Instantly freeze or re-enable pointers (`[ ONLINE ]` / `[ ISOLATED ]`) with zero compositor lag.
+- **Sensitivity & Curves**: Fine-tune sensitivity bias (`-1.0` to `+1.0`) with micro-throttled debouncing, Natural Scroll toggles, and Acceleration Profiles (`Adaptive` vs `Flat`).
+- **Touchpad Dock Assist**: Automatically isolates laptop clickpads whenever an external mouse is plugged in.
+
+### Keyboards & Layout Routing (`[2] / [K]`)
+
+![Space Deck Keyboards Tab](assets/space-deck-keyboards-clean.png)
+
+- **Active Keymap Telemetry**: Displays current layout and active XKB maps per device.
+- **Quick Switchers**: One-click keymap routing (`[ SET BR ]`, `[ SET US ]`, `[ US-INTL ]`).
+- **Device Isolation**: Selectively mute secondary or internal keyboards.
+
+### Sticks, Gamepads & Multi-Axis Radar Avionics (`[3] / [J]`)
+
+![Space Deck Sticks Tab](assets/space-deck-sticks-clean.png)
+
+- **🎮 Multi-Device Detection & Selector**: Discovers all `/dev/input/js*` devices with exact hardware names, axis counts, and button counts, with live switching via the **Active Flight Unit** dropdown.
+- **🎯 Dual 2D Radar Scopes**:
+  - **Stick 1 (X/Y)**: Primary Pitch and Roll deflection scope.
+  - **Stick 2 (RX/RY)**: Secondary Gimbal Slew, Look, or POV Hat deflection scope.
+- **📊 Throttle & Aux Bargraphs**: Real-time vertical Throttle (`THR Z`), vertical Stick Twist (`TWIST RZ`), and horizontal Rudder/Pedal indicators.
+- **💡 Button & Switch Matrix**: 16 illuminated real-time LED annunciators (`B01` .. `B16`) that light up upon button press.
+- **🎚️ Deadzone Calibration**: Hardware drift filter slider (`0%` to `30%`).
+
+### Coordinated Flight Profiles (`[4] / [P]`)
+
+![Space Deck Flight Profiles Tab](assets/space-deck-profiles-clean.png)
+
+- **`[1] 🚀 COMMAND DECK / WORKSTATION`**: All pointers and gestures enabled, natural scrolling ON, multi-layout active.
+- **`[2] 🎯 COMBAT / FPS GAMING`**: Flat raw 1:1 acceleration, laptop touchpad isolated, 0 sensitivity bias.
+- **`[3] ✈️ ORBITAL SIM / FLIGHT HOTAS`**: Flight sticks unmasked, smoothed mouse response curves, laptop clickpad isolated.
+

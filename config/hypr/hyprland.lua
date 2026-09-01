@@ -328,6 +328,7 @@ hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local
 hl.bind(mainMod .. " + SHIFT + V", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-capcom-dialog"))
 hl.bind(mainMod .. " + SHIFT + A", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-capcom-dialog"))
 hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-default-apps"))
+hl.bind(mainMod .. " + SHIFT + I", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-deck"))
 hl.bind(mainMod .. " + SHIFT + R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-display"))
 hl.bind(mainMod .. " + SHIFT + O", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/space-screensaver"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
@@ -516,6 +517,14 @@ hl.window_rule({
     float = true,
     center = true,
     pin   = true,
+})
+
+-- Space Deck Universal Human Interface & Input Controller
+hl.window_rule({
+    name  = "space-deck-float",
+    match = { class = "space-deck" },
+    float = true,
+    center = true,
 })
 
 -- Space Theme & Visual Avionics Configurator
